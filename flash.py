@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-RNodeTHV4 Flash Utility
+RTNode-HeltecV4 Flash Utility
 
-Flash the RNodeTHV4 boundary node firmware to a Heltec WiFi LoRa 32 V3 or V4.
+Flash the RTNode-HeltecV4 transport node firmware to a Heltec WiFi LoRa 32 V3 or V4.
 No PlatformIO required — just Python 3 and a USB cable.
 
 By default, downloads the latest firmware from GitHub Releases (if newer than
@@ -47,11 +47,11 @@ import time
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-VERSION         = "1.0.17"
+VERSION         = "1.0.18"
 CHIP            = "esp32s3"
 FLASH_MODE      = "qio"    # Global default; overridden by board profile
 FLASH_FREQ      = "80m"
-GITHUB_REPO     = "jrl290/RNodeTHV4"
+GITHUB_REPO     = "jrl290/RTNode-HeltecV4"
 
 # Runtime state (set automatically during main())
 _flash_mode_override = None   # CLI --flash-mode sets this; otherwise board profile wins
@@ -72,7 +72,7 @@ BOARD_PROFILES = {
         "pio_env":         "heltec_V4_boundary",
         "build_dir":       ".pio/build/heltec_V4_boundary",
         "firmware_bin":    "rnode_firmware_heltec32v4_boundary.bin",
-        "merged_filename": "rnodethv4_firmware.bin",
+        "merged_filename": "rtnode_heltec_v4.bin",
         "flash_size":      "16MB",
         "baud_rate":       "921600",
         "flash_mode":      "dio",    # DIO is universally compatible with all flash chips
@@ -82,7 +82,7 @@ BOARD_PROFILES = {
         "pio_env":         "heltec_V3_boundary",
         "build_dir":       ".pio/build/heltec_V3_boundary",
         "firmware_bin":    "rnode_firmware_heltec32v3.bin",
-        "merged_filename": "rnodethv3_firmware.bin",
+        "merged_filename": "rtnode_heltec_v3.bin",
         "flash_size":      "8MB",
         "baud_rate":       "460800",
         "flash_mode":      "dio",    # V3 uses DIO — some flash chips do not support QIO
@@ -933,7 +933,7 @@ def _monitor_boot(port, timeout=8):
 def main():
     global _board
     parser = argparse.ArgumentParser(
-        description="RNodeTHV4 Flash Utility — flash boundary node firmware to Heltec V3/V4",
+        description="RTNode-HeltecV4 Flash Utility — flash transport node firmware to Heltec V3/V4",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -1017,7 +1017,7 @@ Examples:
 
     print()
     print("╔══════════════════════════════════════════╗")
-    print("║       RNodeTHV4 Flash Utility            ║")
+    print("║    RTNode-HeltecV4 Flash Utility         ║")
     print(f"║  {bp['name']:^40s}  ║")
     print("╚══════════════════════════════════════════╝")
     print()
@@ -1192,7 +1192,7 @@ Examples:
 
         print(f"\n  App-only update: {os.path.basename(firmware_path)} → 0x{APP_ADDR:05x}")
         print(f"  Size: {os.path.getsize(firmware_path):,} bytes")
-        print(f"  WiFi/boundary settings will be preserved")
+        print(f"  WiFi/transport settings will be preserved")
 
     # ── Interactive options ─────────────────────────────────────────────────
 

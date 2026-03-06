@@ -68,7 +68,12 @@
 #define ADDR_CONF_AP_SSID    0x93  // AP SSID (33 bytes, null-terminated)
 #define ADDR_CONF_AP_PSK     0xB4  // AP PSK (33 bytes, null-terminated)
 #define ADDR_CONF_WIFI_EN   0xD5  // WiFi enable flag (1 byte, 0x73 = enabled)
-// Total: 0xD6 (214 bytes used of 256 CONFIG area)
+// IFAC (Interface Access Code) settings for LoRa interface
+#define ADDR_CONF_IFAC_EN   0xD6  // IFAC enable flag (1 byte, 0x73 = enabled)
+#define ADDR_CONF_IFAC_NAME 0xD7  // Network name (33 bytes, null-terminated)
+#define ADDR_CONF_IFAC_PASS 0xF8  // Passphrase (33 bytes, null-terminated)
+// Total: 0x119 (281 bytes — extends beyond 256-byte CONFIG area into
+//         unused EEPROM gap; safe on ESP32 where EEPROM starts at 824)
 
 #define BOUNDARY_ENABLE_BYTE 0x73
 
@@ -88,6 +93,11 @@ struct BoundaryState {
     uint16_t ap_tcp_port;     // Port for the AP TCP server
     char     ap_ssid[33];     // AP SSID
     char     ap_psk[33];      // AP PSK (empty = open)
+
+    // IFAC settings for LoRa interface
+    bool     ifac_enabled;    // Whether IFAC is configured
+    char     ifac_netname[33]; // Network name (empty = not set)
+    char     ifac_passphrase[33]; // Passphrase (empty = not set)
 
     // Runtime state
     bool     wifi_connected;
@@ -123,6 +133,9 @@ inline void boundary_load_config() {
         boundary_state.ap_tcp_port = 4242;
         boundary_state.ap_ssid[0] = '\0';
         boundary_state.ap_psk[0] = '\0';
+        boundary_state.ifac_enabled = false;
+        boundary_state.ifac_netname[0] = '\0';
+        boundary_state.ifac_passphrase[0] = '\0';
         // Mark as enabled since we're compiled with BOUNDARY_MODE
         boundary_state.enabled = true;
         return;
@@ -181,6 +194,22 @@ inline void boundary_load_config() {
     }
     boundary_state.ap_psk[32] = '\0';
 
+    // Load IFAC settings
+    boundary_state.ifac_enabled =
+        (EEPROM.read(config_addr(ADDR_CONF_IFAC_EN)) == BOUNDARY_ENABLE_BYTE);
+
+    for (int i = 0; i < 32; i++) {
+        boundary_state.ifac_netname[i] = EEPROM.read(config_addr(ADDR_CONF_IFAC_NAME + i));
+        if (boundary_state.ifac_netname[i] == (char)0xFF) boundary_state.ifac_netname[i] = '\0';
+    }
+    boundary_state.ifac_netname[32] = '\0';
+
+    for (int i = 0; i < 32; i++) {
+        boundary_state.ifac_passphrase[i] = EEPROM.read(config_addr(ADDR_CONF_IFAC_PASS + i));
+        if (boundary_state.ifac_passphrase[i] == (char)0xFF) boundary_state.ifac_passphrase[i] = '\0';
+    }
+    boundary_state.ifac_passphrase[32] = '\0';
+
     // Reset runtime state
     boundary_state.packets_bridged_lora_to_tcp = 0;
     boundary_state.packets_bridged_tcp_to_lora = 0;
@@ -217,6 +246,18 @@ inline void boundary_save_config() {
         EEPROM.write(config_addr(ADDR_CONF_AP_PSK + i), boundary_state.ap_psk[i]);
     }
     EEPROM.write(config_addr(ADDR_CONF_AP_PSK + 32), 0x00);
+
+    // IFAC settings
+    EEPROM.write(config_addr(ADDR_CONF_IFAC_EN),
+                 boundary_state.ifac_enabled ? BOUNDARY_ENABLE_BYTE : 0x00);
+    for (int i = 0; i < 32; i++) {
+        EEPROM.write(config_addr(ADDR_CONF_IFAC_NAME + i), boundary_state.ifac_netname[i]);
+    }
+    EEPROM.write(config_addr(ADDR_CONF_IFAC_NAME + 32), 0x00);
+    for (int i = 0; i < 32; i++) {
+        EEPROM.write(config_addr(ADDR_CONF_IFAC_PASS + i), boundary_state.ifac_passphrase[i]);
+    }
+    EEPROM.write(config_addr(ADDR_CONF_IFAC_PASS + 32), 0x00);
 
     EEPROM.commit();
 }

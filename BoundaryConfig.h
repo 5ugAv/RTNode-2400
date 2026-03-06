@@ -265,6 +265,32 @@ static void config_send_html() {
     html += F(" dBm (with PA)</p>");
     #endif
 
+    // ── IFAC (Interface Access Code) Section ──
+    html += F(
+        "<h2>&#x1f512; Network Access (IFAC)</h2>"
+        "<p class='note'>Set a network name and/or passphrase to restrict LoRa interface access. "
+        "Only nodes with matching settings can communicate. Both fields are optional.</p>"
+        "<label>IFAC</label>"
+        "<select name='ifac_en'>"
+    );
+    html += F("<option value='0'");
+    if (!boundary_state.ifac_enabled) html += F(" selected");
+    html += F(">Disabled</option>");
+    html += F("<option value='1'");
+    if (boundary_state.ifac_enabled) html += F(" selected");
+    html += F(">Enabled</option>");
+    html += F("</select>");
+
+    html += F("<label>Network Name</label>");
+    html += F("<input name='ifac_name' maxlength='32' placeholder='e.g. MyNetwork' value='");
+    html += String(boundary_state.ifac_netname);
+    html += F("'>");
+
+    html += F("<label>Passphrase</label>");
+    html += F("<input name='ifac_pass' type='password' maxlength='32' placeholder='Shared secret' value='");
+    html += String(boundary_state.ifac_passphrase);
+    html += F("'>");
+
     // ── Options Section ──
     html += F(
         "<h2>&#x2699; Options</h2>"
@@ -361,6 +387,24 @@ static void config_handle_save() {
     boundary_state.ap_tcp_enabled = (config_server->arg("ap_tcp_en").toInt() == 1);
     boundary_state.ap_tcp_port = (uint16_t)config_server->arg("ap_tcp_port").toInt();
     if (boundary_state.ap_tcp_port == 0) boundary_state.ap_tcp_port = 4242;
+
+    // ── IFAC settings ──
+    boundary_state.ifac_enabled = (config_server->arg("ifac_en").toInt() == 1);
+
+    String ifac_name = config_server->arg("ifac_name");
+    memset(boundary_state.ifac_netname, 0, sizeof(boundary_state.ifac_netname));
+    strncpy(boundary_state.ifac_netname, ifac_name.c_str(), sizeof(boundary_state.ifac_netname) - 1);
+
+    String ifac_pass = config_server->arg("ifac_pass");
+    memset(boundary_state.ifac_passphrase, 0, sizeof(boundary_state.ifac_passphrase));
+    strncpy(boundary_state.ifac_passphrase, ifac_pass.c_str(), sizeof(boundary_state.ifac_passphrase) - 1);
+
+    // If IFAC is enabled but both fields are empty, disable it
+    if (boundary_state.ifac_enabled &&
+        boundary_state.ifac_netname[0] == '\0' &&
+        boundary_state.ifac_passphrase[0] == '\0') {
+        boundary_state.ifac_enabled = false;
+    }
 
     // Save boundary config to EEPROM
     boundary_save_config();

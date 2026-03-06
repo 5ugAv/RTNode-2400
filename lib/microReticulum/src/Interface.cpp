@@ -2,11 +2,60 @@
 
 #include "Identity.h"
 #include "Transport.h"
+#include "Reticulum.h"
+#include "Cryptography/Hashes.h"
+#include "Cryptography/HKDF.h"
 
 using namespace RNS;
 using namespace RNS::Type::Interface;
 
 /*static*/ uint8_t Interface::DISCOVER_PATHS_FOR = MODE_ACCESS_POINT | MODE_GATEWAY;
+
+void Interface::setup_ifac(const char* ifac_netname, const char* ifac_netkey) {
+	assert(_impl);
+	if (ifac_netname == nullptr && ifac_netkey == nullptr) {
+		return;
+	}
+	// If both are empty strings, treat as no IFAC
+	bool has_netname = (ifac_netname != nullptr && ifac_netname[0] != '\0');
+	bool has_netkey = (ifac_netkey != nullptr && ifac_netkey[0] != '\0');
+	if (!has_netname && !has_netkey) {
+		return;
+	}
+
+	TRACE("Interface::setup_ifac: setting up IFAC for " + _impl->_name);
+
+	// Build ifac_origin = SHA256(netname) || SHA256(netkey)
+	Bytes ifac_origin;
+	if (has_netname) {
+		Bytes netname_bytes((const uint8_t*)ifac_netname, strlen(ifac_netname));
+		Bytes hash = Identity::full_hash(netname_bytes);
+		ifac_origin = ifac_origin + hash;
+	}
+	if (has_netkey) {
+		Bytes netkey_bytes((const uint8_t*)ifac_netkey, strlen(ifac_netkey));
+		Bytes hash = Identity::full_hash(netkey_bytes);
+		ifac_origin = ifac_origin + hash;
+	}
+
+	// Hash the combined origin
+	Bytes ifac_origin_hash = Identity::full_hash(ifac_origin);
+
+	// Derive ifac_key via HKDF(salt=IFAC_SALT, ikm=ifac_origin_hash, length=64)
+	Bytes salt(IFAC_SALT, IFAC_SALT_SIZE);
+	_impl->_ifac_key = Cryptography::hkdf(64, ifac_origin_hash, salt);
+
+	// Create an identity from the derived key (64 bytes = 32 X25519 + 32 Ed25519)
+	Identity ifac_id(false);  // don't auto-generate keys
+	ifac_id.load_private_key(_impl->_ifac_key);
+	_impl->_ifac_id = ifac_id;
+
+	// Set _ifac_identity to non-empty to flag IFAC as enabled
+	// (Transport checks this with operator bool)
+	_impl->_ifac_identity = ifac_id.get_public_key();
+
+	TRACE("Interface::setup_ifac: IFAC configured, ifac_size=" + std::to_string(_impl->_ifac_size));
+}
 
 void InterfaceImpl::handle_outgoing(const Bytes& data) {
 	//TRACE("InterfaceImpl.handle_outgoing: data: " + data.toHex());

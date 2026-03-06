@@ -1,6 +1,6 @@
-# RNodeTHV4 — Reticulum Boundary Node for Heltec WiFi LoRa 32 V3 / V4
+# RTNode-HeltecV4 — Reticulum Transport Node for Heltec WiFi LoRa 32 V3 / V4
 
-A custom firmware for the **Heltec WiFi LoRa 32 V3** and **V4** (ESP32-S3 + SX1262) that operates as a **Boundary Node** — bridging a local LoRa radio network with a remote TCP/IP backbone (such as [rmap.world](https://rmap.world)) over WiFi.
+A custom firmware for the **Heltec WiFi LoRa 32 V3** and **V4** (ESP32-S3 + SX1262) that operates as a **Transport Node** — bridging a local LoRa radio network with a remote TCP/IP backbone (such as [rmap.world](https://rmap.world)) over WiFi.
 
 ```
   Android / Sideband                                             Remote
@@ -10,8 +10,8 @@ A custom firmware for the **Heltec WiFi LoRa 32 V3** and **V4** (ESP32-S3 + SX12
   └──────────┘                │                                rmap.world)
                          LoRa Radio                                ▲
                               │            ┌──────────────┐  WiFi  │
-                       ◄── RF mesh ──────► │ RNodeTHV4    │ ◄─TCP──┘
-                              │            │ Boundary Node│    ▲
+                       ◄── RF mesh ──────► │ RTNode-HV4  │ ◄─TCP──┘
+                              │            │Transport Node│    ▲
                         Other RNodes       └──────────────┘    │
                                                            ┌───┴───┐
                                                            │ Router│
@@ -56,8 +56,8 @@ The easiest way to flash a pre-built firmware. You only need Python 3 and a USB 
 pip install esptool
 
 # Clone this repo (or download just flash.py + the firmware binary)
-git clone https://github.com/jrl290/RNodeTHV4.git
-cd RNodeTHV4
+git clone https://github.com/jrl290/RTNode-HeltecV4.git
+cd RTNode-HeltecV4
 
 # Download latest firmware from GitHub Releases and flash
 # (auto-detects V3 vs V4 from flash size)
@@ -68,7 +68,7 @@ python flash.py --download --board v3
 python flash.py --download --board v4
 
 # Or flash a local binary
-python flash.py --file rnodethv4_firmware.bin
+python flash.py --file rtnode_heltec_v4.bin
 ```
 
 The flash utility auto-detects whether a V3 or V4 is connected by querying the flash size (8MB = V3, 16MB = V4). You can override with `--board v3` or `--board v4`. It will list all available serial ports and prompt you to choose one. If no ports are detected, you may need to hold the **BOOT** button while pressing **RESET** to enter download mode.
@@ -80,8 +80,8 @@ For development or customization:
 ```bash
 # Prerequisites: PlatformIO installed (VS Code extension or CLI)
 
-git clone https://github.com/jrl290/RNodeTHV4.git
-cd RNodeTHV4
+git clone https://github.com/jrl290/RTNode-HeltecV4.git
+cd RTNode-HeltecV4
 
 # Build for V4
 pio run -e heltec_V4_boundary
@@ -102,12 +102,12 @@ pio device monitor -e heltec_V4_boundary
 
 ### Option C: Manual esptool Flash
 
-If you have the merged binary (`rnodethv4_firmware.bin`), you can flash it with a single esptool command:
+If you have the merged binary (`rtnode_heltec_v4.bin`), you can flash it with a single esptool command:
 
 ```bash
 esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
   write_flash -z --flash_mode qio --flash_freq 80m --flash_size 16MB \
-  0x0 rnodethv4_firmware.bin
+  0x0 rtnode_heltec_v4.bin
 ```
 
 Replace `/dev/ttyACM0` with your serial port (`/dev/cu.usbmodem*` on macOS, `COM3` on Windows).
@@ -183,7 +183,7 @@ The 128×64 OLED is split into two panels:
 ### Right Panel — Device Info (64×64)
 
 ```
- ▓▓ RNodeTHV4 ▓▓  ← title bar (inverted)
+ ▓▓ RTNode-HV4 ▓▓  ← title bar (inverted)
  867.200MHz       ← LoRa frequency
  SF7 125k         ← spreading factor & bandwidth
  ────────────────  ← separator
@@ -204,14 +204,14 @@ The firmware runs up to **three RNS interfaces** simultaneously, using different
 The LoRa radio operates in **Access Point mode**. In Reticulum, this means:
 - The interface broadcasts its own announces but **blocks rebroadcast of remote announces** from crossing to LoRa
 - This prevents backbone announces (hundreds of remote destinations) from flooding the limited-bandwidth LoRa channel
-- Local nodes discover the boundary node directly; the boundary node answers path requests for remote destinations from its cache
+- Local nodes discover the transport node directly; the transport node answers path requests for remote destinations from its cache
 
 ### TCP Backbone Interface — `MODE_BOUNDARY`
 
-The TCP backbone connection uses `MODE_BOUNDARY` (`0x20`), a custom implementation of the Reticulum boundary concept adapted for the memory-constrained ESP32 environment. In this implementation, boundary mode means:
+The TCP backbone connection uses `MODE_BOUNDARY` (`0x20`), a custom transport mode adapted for the memory-constrained ESP32 environment. In this mode:
 - Incoming announces from the backbone are received and cached, but **not stored in the path table by default** — only stored when specifically requested via a path request from a local LoRa node
 - This prevents the path table (limited to 48 entries on ESP32) from being overwhelmed by thousands of backbone destinations
-- When the path table needs to be culled, **boundary-mode paths are evicted first**, preserving locally-needed LoRa paths
+- When the path table needs to be culled, **backbone-learned paths are evicted first**, preserving locally-needed LoRa paths
 
 ### Optional Local TCP Server — `MODE_ACCESS_POINT`
 
@@ -228,18 +228,18 @@ The ESP32-S3 has limited RAM compared to a desktop Reticulum node. Several custo
 
 ### Table Size Limits
 
-| Table | Default (Desktop) | RNodeTHV4 | Rationale |
+| Table | Default (Desktop) | RTNode-HeltecV4 | Rationale |
 |-------|-------------------|-----------|-----------|
-| Path table (`_destination_table`) | Unbounded | **48 entries** | Prevents unbounded growth; boundary paths evicted first |
+| Path table (`_destination_table`) | Unbounded | **48 entries** | Prevents unbounded growth; backbone-learned paths evicted first |
 | Hash list (`_hashlist`) | 1,000,000 | **32** | Packet dedup list; small is fine for low-throughput LoRa |
 | Path request tags (`_max_pr_tags`) | 32,000 | **32** | Pending path requests rarely exceed a few dozen |
-| Known destinations | 100 | **24** | Identity cache; rarely need more on a boundary node |
+| Known destinations | 100 | **24** | Identity cache; rarely need more on a transport node |
 | Max queued announces | 16 | **4** | Outbound announce queue; LoRa is slow, no point queuing many |
 | Max receipts | 1,024 | **20** | Packet receipt tracking |
 
 ### Timeout Reductions
 
-| Setting | Default | RNodeTHV4 | Rationale |
+| Setting | Default | RTNode-HeltecV4 | Rationale |
 |---------|---------|-----------|-----------|
 | Destination timeout | 7 days | **1 day** | Free memory faster; stale paths re-resolve automatically |
 | Pathfinder expiry | 7 days | **1 day** | Same as above |
@@ -254,18 +254,18 @@ The most critical optimization: **backbone announces are not stored in the path 
 
 Instead:
 1. Backbone announces are received and their packets cached to flash storage
-2. When a local LoRa node requests a path, the boundary checks its cache and responds directly
+2. When a local LoRa node requests a path, the transport node checks its cache and responds directly
 3. Only **specifically requested** paths get a path table entry
 4. Path table culling prioritizes evicting backbone entries over local ones
 
 ### Default Route Forwarding
 
-When a transport-addressed packet arrives from LoRa but the boundary has no path table entry for it, the firmware:
+When a transport-addressed packet arrives from LoRa but the transport node has no path table entry for it, the firmware:
 1. Strips the transport headers (converts `HEADER_2` → `HEADER_1/BROADCAST`)
 2. Forwards the raw packet to the backbone interface
 3. Creates reverse-table entries so proofs can route back to the sender
 
-This acts as a **default route** — any packet the boundary can't route locally gets forwarded to the backbone.
+This acts as a **default route** — any packet the transport node can't route locally gets forwarded to the backbone.
 
 ### Cached Packet Unpacking Fix
 
@@ -279,7 +279,7 @@ This was changed to call `unpack()` instead, which parses all packet fields AND 
 
 The C++ `std::map::insert()` method silently does nothing when a key already exists — unlike Python's `dict[key] = value` which replaces. The original microReticulum code used `insert()` to update path table entries, meaning stale LoRa paths were never replaced by newer TCP paths (or vice versa).
 
-This was fixed by calling `erase()` before `insert()`, ensuring updated path entries always replace stale ones. Without this fix, the boundary node would continue routing packets via an old interface even after a better path was learned.
+This was fixed by calling `erase()` before `insert()`, ensuring updated path entries always replace stale ones. Without this fix, the transport node would continue routing packets via an old interface even after a better path was learned.
 
 ### Interface Name Uniqueness
 
@@ -310,21 +310,21 @@ On your server, configure `rnsd` with a TCP Server Interface in `~/.reticulum/co
     listen_port = 4242
 ```
 
-Then configure the boundary node as a **Client** pointing to your server's IP.
+Then configure the transport node as a **Client** pointing to your server's IP.
 
-### Example: rnsd Connects to Boundary
+### Example: rnsd Connects to Transport Node
 
 On your server, configure `rnsd` with a TCP Client Interface:
 
 ```ini
 [interfaces]
-  [[TCP Client to Boundary]]
+  [[TCP Client to Transport Node]]
     type = TCPClientInterface
-    target_host = <boundary-node-ip>
+    target_host = <transport-node-ip>
     target_port = 4242
 ```
 
-Set the boundary node's **Local TCP Server** to **Enabled** (port 4242).
+Set the transport node's **Local TCP Server** to **Enabled** (port 4242).
 
 ## Architecture
 
@@ -332,11 +332,11 @@ Set the boundary node's **Local TCP Server** to **Enabled** (port 4242).
 
 | File | Purpose |
 |------|---------|
-| `RNode_Firmware.ino` | Main firmware — boundary mode initialization, interface setup, button handling |
-| `BoundaryMode.h` | Boundary state struct, EEPROM load/save, configuration defaults |
+| `RNode_Firmware.ino` | Main firmware — transport mode initialization, interface setup, button handling |
+| `BoundaryMode.h` | Transport node state struct, EEPROM load/save, configuration defaults |
 | `BoundaryConfig.h` | Web-based captive portal for configuration |
 | `TcpInterface.h` | TCP interface for both backbone and local server (implements `RNS::InterfaceImpl`) with HDLC framing, unique naming, and 10 Mbps bitrate |
-| `Display.h` | OLED display layout — boundary-specific status page |
+| `Display.h` | OLED display layout — transport node status page |
 | `flash.py` | Flash utility — list serial ports, download from GitHub, merge & flash firmware |
 | `Boards.h` | Board variant definitions for V3 and V4 |
 | `platformio.ini` | Build targets: `heltec_V3_boundary`, `heltec_V4_boundary`, and `heltec_V4_boundary-local` |
@@ -347,7 +347,7 @@ The firmware depends on [microReticulum](https://github.com/attermann/microRetic
 
 | File | Changes |
 |------|---------|
-| `Transport.cpp` | Selective caching, default route forwarding, boundary-aware culling, `get_cached_packet()` unpack fix, path table `erase()+insert()` fix, memory limits |
+| `Transport.cpp` | Selective caching, default route forwarding, transport-aware culling, `get_cached_packet()` unpack fix, path table `erase()+insert()` fix, memory limits |
 | `Transport.h` | `MODE_BOUNDARY`, `PacketEntry`, `Callbacks`, `cull_path_table()`, configurable table sizes |
 | `Identity.cpp` | `_known_destinations_maxsize` = 24, `cull_known_destinations()` |
 | `Type.h` | `MODE_BOUNDARY` = 0x20, reduced `MAX_QUEUED_ANNOUNCES`, `MAX_RECEIPTS`, shorter timeouts |

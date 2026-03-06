@@ -415,7 +415,7 @@ MTU CLAMP: path=8192 ph=1064 nh=1064 -> clamped=1064
 ### Test Reproduction
 
 ```bash
-cd test-harnesses/RNodeTHV4
+cd test-harnesses/RTNode-HeltecV4
 bash run_test.sh
 ```
 

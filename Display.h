@@ -56,6 +56,10 @@ struct BoundaryState {
     uint16_t ap_tcp_port;
     char     ap_ssid[33];
     char     ap_psk[33];
+    // IFAC settings for LoRa interface
+    bool     ifac_enabled;
+    char     ifac_netname[33];
+    char     ifac_passphrase[33];
     bool     wifi_connected;
     bool     tcp_connected;       // Backbone (WAN) connected
     bool     ap_tcp_connected;    // Local TCP server (LAN) has client
@@ -940,7 +944,7 @@ void draw_disp_area() {
       disp_area.setTextColor(SSD1306_BLACK);
       disp_area.setTextSize(1);
       disp_area.setCursor(4, 7);
-      disp_area.print("RNodeTHV4");
+      disp_area.print("RTNode");
 
       disp_area.setTextColor(SSD1306_WHITE);
 

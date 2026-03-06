@@ -565,7 +565,10 @@ void setup() {
 
     #ifdef BOUNDARY_MODE
       // Initialize bt_devname for WiFi hostname when BT is disabled
-      if (!bt_init_ran) {
+      #if HAS_BLUETOOTH || HAS_BLE == true
+      if (!bt_init_ran)
+      #endif
+      {
         uint8_t mac[6];
         esp_read_mac(mac, ESP_MAC_WIFI_STA);
         sprintf(bt_devname, "RNode %02X%02X", mac[4], mac[5]);
@@ -729,6 +732,20 @@ void setup() {
       RNS::Transport::path_table_maxsize(24);
       RNS::Transport::path_table_maxpersist(12);
       boundary_load_config();
+
+      // Set up IFAC on the LoRa interface if configured
+      if (boundary_state.ifac_enabled &&
+          (boundary_state.ifac_netname[0] != '\0' || boundary_state.ifac_passphrase[0] != '\0')) {
+        HEAD("Setting up IFAC on LoRa interface...", RNS::LOG_TRACE);
+        lora_interface.setup_ifac(boundary_state.ifac_netname, boundary_state.ifac_passphrase);
+        {
+          char _ifac_msg[96];
+          snprintf(_ifac_msg, sizeof(_ifac_msg), "IFAC configured: netname=%s, passphrase=%s",
+                   boundary_state.ifac_netname[0] ? boundary_state.ifac_netname : "(none)",
+                   boundary_state.ifac_passphrase[0] ? "***" : "(none)");
+          HEAD(_ifac_msg, RNS::LOG_TRACE);
+        }
+      }
 
       // Start WiFi if enabled
       if (boundary_state.wifi_enabled) {
