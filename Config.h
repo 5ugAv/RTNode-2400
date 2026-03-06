@@ -231,7 +231,7 @@
     uint8_t display_intensity = 0xFF;
     uint8_t display_addr = 0xFF;
     volatile bool display_updating = false;
-    bool display_blanking_enabled = false;
+    bool display_blanking_enabled = true;
     bool display_diagnostics = true;    
     bool device_init_done = false;
     bool eeprom_ok = false;

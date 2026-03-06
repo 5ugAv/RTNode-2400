@@ -164,7 +164,7 @@ float epd_update_fps  = 0.5;
 #define DISP_MODE_LANDSCAPE 0x01
 #define DISP_MODE_PORTRAIT  0x02
 #define DISP_PIN_SIZE   6
-#define DISPLAY_BLANKING_TIMEOUT 1*60*1000
+#define DISPLAY_BLANKING_TIMEOUT 10*60*1000
 uint8_t disp_mode = DISP_MODE_UNKNOWN;
 uint8_t disp_ext_fb = false;
 unsigned char fb[512];
