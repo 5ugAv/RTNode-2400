@@ -315,7 +315,7 @@ namespace RNS {
 		static void register_interface(Interface& interface);
 		static void deregister_interface(const Interface& interface);
 		static void register_local_client_interface(const Interface& interface) { _local_client_interfaces.insert(std::cref(interface)); }
-		inline static const std::map<Bytes, Interface&> get_interfaces() { return _interfaces; }
+		inline static const std::map<Bytes, Interface&>& get_interfaces() { return _interfaces; }
 		static void register_destination(Destination& destination);
 		static void deregister_destination(const Destination& destination);
 		static void register_link(Link& link);
