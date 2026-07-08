@@ -2584,13 +2584,18 @@ void loop() {
   }
 
   // ── Heap + WiFi watchdog ───────────────────────────────────────────────────
-  // Monitor heap and WiFi health. Auto-reboot on critical conditions:
-  //  1) Internal heap drops below 20KB (WiFi needs ~16KB for RX buffers)
-  //  2) WiFi down for >15s after having been connected (unrecoverable)
+  // Monitor heap and WiFi health.
+  //  * Internal heap below 20KB is genuinely unrecoverable -> reboot. (WiFi RX
+  //    buffers must come from internal SRAM; once it is exhausted the node
+  //    cannot function, so a reboot is the only recovery.)
+  //  * WiFi loss does NOT reboot. This node's primary job is LoRa transport,
+  //    which must survive WiFi outages. update_wifi() already tears down and
+  //    retries the WiFi association every 10s (WR_RECONNECT_INTERVAL_MS),
+  //    clearing stuck WiFi states without taking the node (and its mesh
+  //    relaying) down. We only log the WiFi up/down edges here.
   {
     static bool     _wifi_watchdog_armed  = false;  // armed once WiFi first connects
     static uint32_t _wifi_lost_at         = 0;      // millis() when WiFi first lost
-    static const uint32_t WIFI_GRACE_MS   = 15000;  // 15s grace before reboot
     static const uint32_t HEAP_CRITICAL   = 20000;  // 20KB minimum internal heap
 
     // ── Heap pressure check (runs always) ─────────────────────────────────
@@ -2625,29 +2630,18 @@ void loop() {
     }
 
     if (_wifi_watchdog_armed && !wifi_now) {
+      // Log the loss once (edge-triggered). Deliberately NO reboot: LoRa
+      // transport keeps running and update_wifi()'s 10s retry handles recovery.
       if (_wifi_lost_at == 0) {
         _wifi_lost_at = millis();
-        Serial.printf("\r\n[WATCHDOG] WiFi lost at %lu ms (grace %lu ms)\r\n",
-                      _wifi_lost_at, WIFI_GRACE_MS);
+        Serial.printf("\r\n[WATCHDOG] WiFi lost at %lu ms — node stays up, LoRa continues; auto-reconnect retries every 10s\r\n",
+                      _wifi_lost_at);
         Serial.printf("[WATCHDOG] WiFi.status()=%d heap=%u min_heap=%u\r\n",
                       (int)WiFi.status(), free_heap, ESP.getMinFreeHeap());
         Serial.flush();
       }
-      // Check if grace period expired — unrecoverable, reboot
-      if ((millis() - _wifi_lost_at) >= WIFI_GRACE_MS) {
-        Serial.printf("\r\n[WATCHDOG] WiFi down %lu ms — REBOOTING\r\n",
-                      millis() - _wifi_lost_at);
-        Serial.printf("[WATCHDOG] WiFi.status()=%d heap=%u\r\n",
-                      (int)WiFi.status(), ESP.getFreeHeap());
-        Serial.printf("[WATCHDOG] Bridged: L→T=%lu T→L=%lu\r\n",
-                      firewall_state.packets_bridged_lora_to_tcp,
-                      firewall_state.packets_bridged_tcp_to_lora);
-        Serial.flush();
-        delay(100);
-        ESP.restart();
-      }
     } else if (_wifi_watchdog_armed && wifi_now && _wifi_lost_at != 0) {
-      // WiFi recovered within grace period
+      // WiFi came back on its own — log recovery time.
       Serial.printf("[WATCHDOG] WiFi back after %lu ms\r\n", millis() - _wifi_lost_at);
       _wifi_lost_at = 0;
     }
