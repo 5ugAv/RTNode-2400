@@ -35,6 +35,11 @@
 #ifndef RTNODE_FORK_VERSION
 #define RTNODE_FORK_VERSION "0.6.2"
 #endif
+// Numeric components of RTNODE_FORK_VERSION for the binary health beacon.
+// Keep these in sync with the string above on every release.
+#define RTNODE_FW_MAJOR 0
+#define RTNODE_FW_MINOR 6
+#define RTNODE_FW_PATCH 2
 
 #define RTNODE_HEALTH_PORT 80
 
