@@ -36,9 +36,30 @@ extern bool airtime_lock;
 #define HEALTH_BEACON_INITIAL_DELAY_MS  (30UL * 1000UL)               // 30 s
 #endif
 
+// Fault detection (payload bit b6). A fault is only CONFIRMED after internal-SRAM
+// heap pressure persists across HEALTH_FAULT_STRIKES consecutive checks (the
+// "3 self-heal attempts" — heap often frees itself as connections close), so a
+// transient dip never cries wolf / dispatches a needless repair. On the
+// false->true edge we fire an immediate beacon; the routine 2h beacon carries the
+// bit in between. (A single clean-recovery crash is NOT escalated here — it is
+// surfaced via the reset-reason field; repeated crashes are a separate future
+// escalation via the RTC bootloop counter.)
+#ifndef HEALTH_FAULT_HEAP_KB
+#define HEALTH_FAULT_HEAP_KB           40         // internal-SRAM early-warning floor (KB)
+#endif
+#ifndef HEALTH_FAULT_STRIKES
+#define HEALTH_FAULT_STRIKES           3
+#endif
+#ifndef HEALTH_FAULT_CHECK_INTERVAL_MS
+#define HEALTH_FAULT_CHECK_INTERVAL_MS (30UL * 1000UL)               // 30 s between checks
+#endif
+
 static RNS::Destination health_destination     = {RNS::Type::NONE};
 static bool             health_beacon_started   = false;
 static uint32_t         health_beacon_next_run  = 0;
+static uint8_t          health_fault_strikes    = 0;
+static bool             health_fault            = false;
+static uint32_t         health_fault_next_check = 0;
 
 // esp_reset_reason() -> wire enum (HB_RESET_*, matches the tool's map).
 inline uint8_t health_reset_reason_code() {
@@ -76,7 +97,7 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN], bool fault = fal
 inline void health_beacon_send() {
     if (!health_destination) return;
     uint8_t payload[HEALTH_BEACON_LEN];
-    health_build_beacon(payload);
+    health_build_beacon(payload, health_fault);
     RNS::Bytes app_data;
     app_data.append(payload, HEALTH_BEACON_LEN);
     health_destination.announce(app_data);
@@ -118,18 +139,47 @@ inline void health_beacon_init() {
     health_destination.accepts_links(false);
     health_destination.set_packet_callback(health_request_handler);
 
-    health_beacon_started  = true;
-    health_beacon_next_run = millis() + HEALTH_BEACON_INITIAL_DELAY_MS;
+    health_beacon_started   = true;
+    health_beacon_next_run  = millis() + HEALTH_BEACON_INITIAL_DELAY_MS;
+    health_fault_next_check = millis() + HEALTH_FAULT_CHECK_INTERVAL_MS;
     Serial.printf("[HealthBeacon] init dst=%s, first announce in ~%lus\r\n",
                   health_destination.hash().toHex().c_str(),
                   (unsigned long)(HEALTH_BEACON_INITIAL_DELAY_MS / 1000));
 }
 
+// Heap-pressure fault check on an interval. Confirms a fault only after
+// HEALTH_FAULT_STRIKES consecutive failures (giving the node time to self-heal
+// between checks), escalates immediately on the false->true edge, and clears on
+// recovery.
+inline void health_fault_check() {
+    if ((int32_t)(millis() - health_fault_next_check) < 0) return;
+    health_fault_next_check = millis() + HEALTH_FAULT_CHECK_INTERVAL_MS;
+
+    uint32_t heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    bool pressure = (heap < (uint32_t)HEALTH_FAULT_HEAP_KB * 1024UL);
+    if (pressure) {
+        if (health_fault_strikes < 0xFF) health_fault_strikes++;
+    } else {
+        health_fault_strikes = 0;
+    }
+
+    bool confirmed = (health_fault_strikes >= HEALTH_FAULT_STRIKES);
+    if (confirmed && !health_fault) {
+        health_fault = true;
+        Serial.printf("[HealthBeacon] FAULT confirmed after %u strikes (heap=%u) -> immediate beacon\r\n",
+                      (unsigned)health_fault_strikes, (unsigned)heap);
+        health_beacon_send();
+    } else if (!confirmed && health_fault) {
+        health_fault = false;
+        Serial.println("[HealthBeacon] fault cleared (heap recovered)");
+    }
+}
+
 // Periodic loop hook. Handles millis() wrap the same way advertise_loop() does.
 inline void health_beacon_loop() {
     if (!health_beacon_started) return;
-    int32_t delta = (int32_t)(millis() - health_beacon_next_run);
-    if (delta < 0) return;
+    health_fault_check();
+    if ((int32_t)(millis() - health_beacon_next_run) < 0) return;
     health_beacon_send();
     health_beacon_next_run = millis() + HEALTH_BEACON_INTERVAL_MS;
 }
