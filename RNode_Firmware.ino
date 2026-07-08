@@ -87,6 +87,10 @@ static bool last_lora_phy_header_valid = false;
   #include "Console.h"
 #endif
 
+#ifdef FIREWALL_MODE
+  #include "HealthStatus.h"   // JSON /status endpoint + shared health snapshot
+#endif
+
 #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52
   #define MODEM_QUEUE_SIZE 8
   typedef struct {
@@ -278,6 +282,14 @@ TcpInterface*  tcp_interface_ptr = nullptr;
 // Local TCP server
 RNS::Interface local_tcp_rns_interface(RNS::Type::NONE);
 TcpInterface*  local_tcp_interface_ptr = nullptr;
+
+#ifdef FIREWALL_MODE
+// Runtime status of the local (LAN) TCP server, for HealthStatus.h. Defined
+// here where local_tcp_interface_ptr and TcpInterface::isStarted() are visible.
+bool health_local_server_up() {
+  return local_tcp_interface_ptr && local_tcp_interface_ptr->isStarted();
+}
+#endif
 // RTC memory flag — survives software reset but not power cycle
 RTC_NOINIT_ATTR uint32_t firewall_config_request;
 #define FIREWALL_CONFIG_MAGIC 0xC0F19A7E
@@ -2582,7 +2594,12 @@ void loop() {
     static const uint32_t HEAP_CRITICAL   = 20000;  // 20KB minimum internal heap
 
     // ── Heap pressure check (runs always) ─────────────────────────────────
-    uint32_t free_heap = ESP.getFreeHeap();
+    // Check internal SRAM specifically, not combined heap+PSRAM. WiFi's
+    // RX buffers must come from internal SRAM (PSRAM can't be used for
+    // DMA), so checking combined free heap could look perfectly healthy
+    // -- thanks to mostly-empty PSRAM -- while the internal SRAM WiFi
+    // actually depends on is critically exhausted.
+    uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (free_heap < HEAP_CRITICAL) {
       Serial.printf("\r\n[WATCHDOG] CRITICAL: Free heap %u < %u — REBOOTING\r\n",
                     free_heap, HEAP_CRITICAL);
@@ -2593,7 +2610,13 @@ void loop() {
       ESP.restart();
     }
 
-    bool wifi_now = wifi_is_connected();
+    // Read WiFi status directly from the driver here, rather than via
+    // wifi_is_connected() (which returns a cached wr_wifi_status only
+    // refreshed later in loop() by update_wifi()). If anything earlier in
+    // this same loop() pass ever blocks, that refresh never runs again on
+    // any future iteration either, and the cached value freezes -- which
+    // would make this exact watchdog permanently blind to a real WiFi loss.
+    bool wifi_now = (WiFi.status() == WL_CONNECTED);
 
     // Arm the watchdog once WiFi has been up at least once
     if (!_wifi_watchdog_armed && wifi_now) {
@@ -2765,6 +2788,11 @@ void loop() {
       uint16_t advert_port = firewall_state.ap_tcp_enabled ? firewall_state.ap_tcp_port : 0;
       mdns_service::start_sta_auto(firewall_state.mdns_hostname, advert_port);
     }
+
+    // Health status endpoint: starts once WiFi station mode is up, then
+    // services HTTP clients each iteration. Both calls early-exit cheaply.
+    health_server_ensure_started();
+    health_server_loop();
     #endif
   #endif
 
