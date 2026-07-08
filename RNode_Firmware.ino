@@ -89,6 +89,7 @@ static bool last_lora_phy_header_valid = false;
 
 #ifdef FIREWALL_MODE
   #include "HealthStatus.h"   // JSON /status endpoint + shared health snapshot
+  #include "HealthBeacon.h"   // periodic health beacon over the LoRa mesh
 #endif
 
 #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52
@@ -1035,6 +1036,11 @@ void setup() {
       // announcer is a no-op until the user has enabled "Advertise Device"
       // in the captive-portal configuration.
       advertise_init();
+
+      // Health beacon: periodic node-health announce over the LoRa mesh to the
+      // field diagnostic tool. Reuses the persistent transport identity so the
+      // announce source hash (the tool's primary key) is stable across reboots.
+      health_beacon_init();
 #endif
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
@@ -2572,6 +2578,7 @@ void loop() {
   // No-op until Reticulum is up and the user has enabled "Advertise Device".
   if (reticulum) {
     advertise_loop();
+    health_beacon_loop();
   }
 #endif
 
