@@ -537,6 +537,32 @@ void led_indicate_airtime_lock() {
 	#endif
 }
 
+// LED Indication: Probe received (home-base "ping" check)
+void led_indicate_probe() {
+	#if HAS_NP == true
+		for (int i = 0; i < 3; i++) {
+			npset(0, 0xFF, 0);
+			delay(150);
+			npset(0, 0, 0);
+			delay(150);
+		}
+	#endif
+}
+
+// LED Indication: Diagnostic activity (a health probe / status request).
+// Short green double-blink — kept brief so it barely stalls the main loop
+// even if a diagnostic tool polls the node rapidly.
+void led_indicate_activity() {
+	#if HAS_NP == true
+		for (int i = 0; i < 2; i++) {
+			npset(0, 0xFF, 0);
+			delay(70);
+			npset(0, 0, 0);
+			delay(70);
+		}
+	#endif
+}
+
 // LED Indication: Boot Error
 void led_indicate_boot_error() {
 	#if HAS_NP == true
