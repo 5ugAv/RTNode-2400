@@ -56,6 +56,142 @@ SPIFlash_Device_t g_RAK15001 {
 #endif
 
 
+// ── SD overflow tier (prototype) ─────────────────────────────────────────────
+// On boards with an SD card (e.g. T-Beam Supreme) route the bulk, growth-prone
+// Reticulum state — the path table (/destination_table), packet cache (/cache),
+// and hashlist (/packet_hashlist) — onto SD, while identity/config stay on the
+// primary flash FS. This lets a car transport node store/relay far more than
+// internal flash allows, and degrades gracefully to flash-only if no card is up.
+//
+// Enabled per-env with -DFILESYSTEM_SD_OVERFLOW=1. Dormant otherwise: every path
+// resolves to the primary FS, so existing (flash-only) builds are unchanged.
+//
+// NOTE: on the Supreme the SD card's 3v3 rail (AXP2101 BLDO1) must be powered
+// BEFORE init_sd_overflow() runs — bring up the PMU first in setup().
+#ifndef FILESYSTEM_SD_OVERFLOW
+#define FILESYSTEM_SD_OVERFLOW 0
+#endif
+
+#if (FS_TYPE == FS_TYPE_LITTLEFS || FS_TYPE == FS_TYPE_SPIFFS)
+// ESP32 fs::FS world: LittleFS/SPIFFS and SD are all fs::FS, so choosing a
+// backend per path is just a reference swap.
+
+  // `FS` is an object-like macro (= LittleFS/SPIFFS). Suspend it while we pull in
+  // SD.h and name the shared base class: SD.h declares `class SDFS : public FS`,
+  // and the bare token `fs::FS` would otherwise expand to `fs::LittleFS`.
+  #pragma push_macro("FS")
+  #undef FS
+  #if FILESYSTEM_SD_OVERFLOW
+    #include <SD.h>
+  #endif
+  using RNodeFsBase = fs::FS;
+  #pragma pop_macro("FS")
+
+  #if FILESYSTEM_SD_OVERFLOW
+    #include <cstring>
+    #include <SPI.h>
+
+    static SPIClass sd_overflow_spi(HSPI);
+    static bool     sd_overflow_ready = false;
+
+    // Bulk / growth-prone Reticulum state that belongs on SD. Everything else
+    // (identity, eeprom, config, time_offset) stays on the primary flash FS.
+    static bool path_is_overflow(const char* p) {
+      if (p == nullptr) { return false; }
+      return strncmp(p, "/cache", 6) == 0
+          || strncmp(p, "/destination_table", 18) == 0
+          || strncmp(p, "/packet_hashlist", 16) == 0;
+    }
+
+    // Resolve the backend for a path: SD for overflow paths when the card is up,
+    // otherwise the primary flash FS (also the fallback when SD is absent).
+    static RNodeFsBase& backendFor(const char* p) {
+      if (sd_overflow_ready && path_is_overflow(p)) { return SD; }
+      return FS;
+    }
+
+    // Bring up the SD card on the board's shared SPI bus. Caller MUST have
+    // already enabled the card's power rail (Supreme: AXP2101 BLDO1) first.
+    static bool init_sd_overflow() {
+      #ifdef IMU_CS
+        // The IMU shares this SPI bus on the Supreme — park its CS high.
+        pinMode(IMU_CS, OUTPUT);
+        digitalWrite(IMU_CS, HIGH);
+      #endif
+      sd_overflow_spi.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
+      sd_overflow_ready = SD.begin(SD_CS, sd_overflow_spi);
+      return sd_overflow_ready;
+    }
+  #else
+    // Overflow disabled: all paths resolve to the primary flash FS.
+    static inline RNodeFsBase& backendFor(const char*) { return FS; }
+  #endif
+
+  // Route a filesystem op for the given path to its chosen backend.
+  #define FS_FOR(p) backendFor(p)
+#else
+  // Non-ESP32 filesystems (nRF52 InternalFS/FlashFS): no SD routing.
+  #define FS_FOR(p) FS
+#endif
+
+
+// ── SD overflow status accessors (for the /status endpoint & health beacon) ──
+// External linkage (declared in FileSystem.h). Return safe defaults when the
+// overflow tier is disabled or no card is present, so callers need no #ifdefs.
+#include <Arduino.h>
+
+#if (FS_TYPE == FS_TYPE_LITTLEFS || FS_TYPE == FS_TYPE_SPIFFS) && FILESYSTEM_SD_OVERFLOW
+
+bool     fs_sd_overflow_ready()  { return sd_overflow_ready; }
+uint64_t fs_sd_card_size_bytes() { return sd_overflow_ready ? SD.cardSize()  : 0; }
+uint64_t fs_sd_total_bytes()     { return sd_overflow_ready ? SD.totalBytes() : 0; }
+uint64_t fs_sd_used_bytes()      { return sd_overflow_ready ? SD.usedBytes()  : 0; }
+
+// JSON array of the overflow files physically present on the card, so a remote
+// /status query can confirm the path table + cache actually live on SD.
+String fs_sd_overflow_listing() {
+  if (!sd_overflow_ready) { return "[]"; }
+  String out = "[";
+  bool first = true;
+  const char* dirs[] = { "/", "/cache" };
+  for (uint8_t i = 0; i < 2; i++) {
+    File d = SD.open(dirs[i]);
+    if (!d) { continue; }
+    if (!d.isDirectory()) { d.close(); continue; }
+    File f = d.openNextFile();
+    while (f) {
+      if (!f.isDirectory()) {
+        if (!first) { out += ","; }
+        first = false;
+        String base(dirs[i]);
+        out += "{\"path\":\"";
+        out += base;
+        if (base != "/") { out += "/"; }
+        out += f.name();
+        out += "\",\"bytes\":";
+        out += (uint32_t)f.size();
+        out += "}";
+      }
+      f.close();
+      f = d.openNextFile();
+    }
+    d.close();
+  }
+  out += "]";
+  return out;
+}
+
+#else
+
+bool     fs_sd_overflow_ready()  { return false; }
+uint64_t fs_sd_card_size_bytes() { return 0; }
+uint64_t fs_sd_total_bytes()     { return 0; }
+uint64_t fs_sd_used_bytes()      { return 0; }
+String   fs_sd_overflow_listing(){ return "[]"; }
+
+#endif
+
+
 bool FileSystem::init() {
 	TRACE("Initializing filesystem...");
 	try {
@@ -93,6 +229,15 @@ bool FileSystem::init() {
 		if (!FlashFS.begin(&g_flash)) {
 			ERROR("FlashFS filesystem mount failed");
 			return false;
+		}
+#endif
+#if (FS_TYPE == FS_TYPE_LITTLEFS || FS_TYPE == FS_TYPE_SPIFFS) && FILESYSTEM_SD_OVERFLOW
+		// Bring up the SD overflow tier. Requires the card's power rail to be on
+		// already (Supreme: AXP2101 BLDO1, enabled during PMU init in setup()).
+		if (init_sd_overflow()) {
+			INFO("SD overflow tier mounted; routing /cache + path table to SD");
+		} else {
+			WARNING("SD overflow tier unavailable; falling back to flash-only");
 		}
 #endif
 		// Ensure filesystem is writable and reformat if not
@@ -267,7 +412,7 @@ void FileSystem::dumpDir(const char* dir) {
 	}
 	return false;
 */
-	return FS.exists(file_path);
+	return FS_FOR(file_path).exists(file_path);
 }
 
 /*virtua*/ size_t FileSystem::read_file(const char* file_path, RNS::Bytes& data) {
@@ -277,7 +422,7 @@ void FileSystem::dumpDir(const char* dir) {
 	File file(FS);
 	if (file.open(file_path, FILE_O_READ)) {
 #else
-	File file = FS.open(file_path, FILE_READ);
+	File file = FS_FOR(file_path).open(file_path, FILE_READ);
 	if (file) {
 #endif
 		size_t size = file.size();
@@ -291,7 +436,7 @@ void FileSystem::dumpDir(const char* dir) {
 		file.close();
 	}
 	else {
-		if (FS.exists(file_path)) {
+		if (FS_FOR(file_path).exists(file_path)) {
 			ERRORF("read_file: failed to open input file %s", file_path);
 		} else {
 			TRACEF("read_file: file %s does not exist (expected on first use)", file_path);
@@ -303,15 +448,15 @@ void FileSystem::dumpDir(const char* dir) {
 /*virtua*/ size_t FileSystem::write_file(const char* file_path, const RNS::Bytes& data) {
 	TRACEF("write_file: writing to file %s", file_path);
 	// CBA TODO Replace remove with working truncation
-	if (FS.exists(file_path)) {
-		FS.remove(file_path);
+	if (FS_FOR(file_path).exists(file_path)) {
+		FS_FOR(file_path).remove(file_path);
 	}
 	size_t wrote = 0;
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
 	if (file.open(file_path, FILE_O_WRITE)) {
 #else
-	File file = FS.open(file_path, FILE_WRITE);
+	File file = FS_FOR(file_path).open(file_path, FILE_WRITE);
 	if (file) {
 #endif
 		// Seek to beginning to overwrite
@@ -382,7 +527,7 @@ void FileSystem::dumpDir(const char* dir) {
 	}
 	TRACEF("open_file: opening file %s in mode %s", file_path, mode);
 	// CBA Using copy constructor to obtain File*
-	File* file = new File(FS.open(file_path, mode));
+	File* file = new File(FS_FOR(file_path).open(file_path, mode));
 	if (file == nullptr || !(*file)) {
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
@@ -394,12 +539,14 @@ void FileSystem::dumpDir(const char* dir) {
 
 /*virtua*/ bool FileSystem::remove_file(const char* file_path) {
 	TRACEF("remove_file: removing file %s", file_path);
-	return FS.remove(file_path);
+	return FS_FOR(file_path).remove(file_path);
 }
 
 /*virtua*/ bool FileSystem::rename_file(const char* from_file_path, const char* to_file_path) {
 	TRACEF("rename_file: renaming file %s to %s", from_file_path, to_file_path);
-	return FS.rename(from_file_path, to_file_path);
+	// NOTE: assumes both paths live on the same tier — cross-backend renames are
+	// not supported (would need copy+delete). Reticulum renames within a tier.
+	return FS_FOR(from_file_path).rename(from_file_path, to_file_path);
 }
 
 /*virtua*/ bool FileSystem::directory_exists(const char* directory_path) {
@@ -408,7 +555,7 @@ void FileSystem::dumpDir(const char* dir) {
 	File file(FS);
 	if (file.open(directory_path, FILE_O_READ)) {
 #else
-	File file = FS.open(directory_path, FILE_READ);
+	File file = FS_FOR(directory_path).open(directory_path, FILE_READ);
 	if (file) {
 #endif
 		bool is_directory = file.isDirectory();
@@ -420,7 +567,7 @@ void FileSystem::dumpDir(const char* dir) {
 
 /*virtua*/ bool FileSystem::create_directory(const char* directory_path) {
 	TRACEF("create_directory: creating directory %s", directory_path);
-	if (!FS.mkdir(directory_path)) {
+	if (!FS_FOR(directory_path).mkdir(directory_path)) {
 		ERROR("create_directory: failed to create directory " + std::string(directory_path));
 		return false;
 	}
@@ -432,7 +579,7 @@ void FileSystem::dumpDir(const char* dir) {
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	if (!FS.rmdir_r(directory_path)) {
 #else
-	if (!FS.rmdir(directory_path)) {
+	if (!FS_FOR(directory_path).rmdir(directory_path)) {
 #endif
 		ERROR("remove_directory: failed to remove directory " + std::string(directory_path));
 		return false;
@@ -443,7 +590,7 @@ void FileSystem::dumpDir(const char* dir) {
 /*virtua*/ std::list<std::string> FileSystem::list_directory(const char* directory_path) {
 	TRACEF("list_directory: listing directory %s", directory_path);
 	std::list<std::string> files;
-	File root = FS.open(directory_path);
+	File root = FS_FOR(directory_path).open(directory_path);
 	if (!root) {
 		ERROR("list_directory: failed to open directory " + std::string(directory_path));
 		return files;

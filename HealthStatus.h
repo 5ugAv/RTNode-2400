@@ -161,9 +161,16 @@ inline void collect_health(HealthSnapshot& h) {
 }
 
 // ─── JSON serialization ─────────────────────────────────────────────────────
+// SD overflow tier accessors (implemented in FileSystem.cpp) — forward-declared
+// so this header needn't pull in the whole FileSystem/microReticulum include set.
+bool     fs_sd_overflow_ready();
+uint64_t fs_sd_card_size_bytes();
+uint64_t fs_sd_used_bytes();
+String   fs_sd_overflow_listing();
+
 inline String health_to_json(const HealthSnapshot& h) {
     String j;
-    j.reserve(640);
+    j.reserve(896);
     j += "{";
     j += "\"fork\":\"";        j += h.fork;        j += "\",";
     j += "\"fw_version\":\"";  j += h.fw_version;  j += "\",";
@@ -194,6 +201,17 @@ inline String health_to_json(const HealthSnapshot& h) {
     j += "\"local_tcp_client_connected\":"; j += (h.local_tcp_client_connected ? "true" : "false"); j += ",";
 
     j += "\"node_name\":\""; j += (h.node_name ? h.node_name : ""); j += "\",";
+
+    // SD overflow tier — confirms remotely that the path table + cache live on
+    // the microSD card. mounted:false on boards without the tier.
+    j += "\"sd_overflow\":{\"mounted\":";
+    j += (fs_sd_overflow_ready() ? "true" : "false");
+    if (fs_sd_overflow_ready()) {
+        j += ",\"card_mb\":"; j += (uint32_t)(fs_sd_card_size_bytes() / (1024ULL * 1024ULL));
+        j += ",\"used_kb\":"; j += (uint32_t)(fs_sd_used_bytes() / 1024ULL);
+        j += ",\"files\":";   j += fs_sd_overflow_listing();
+    }
+    j += "},";
 
     // Reserved for Phase 2: boot-log FATAL/ERROR capture. Emitted now so the
     // Pi tool can rely on a stable schema.
