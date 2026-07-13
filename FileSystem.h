@@ -38,4 +38,15 @@ public:
 
 };
 
+// ── SD overflow tier status (implemented in FileSystem.cpp) ──────────────────
+// Safe to call from anywhere; return false/0/"[]" when the tier is disabled or
+// no card is present. Used by the /status endpoint to confirm the path table +
+// cache physically live on the microSD card.
+#include <Arduino.h>
+bool     fs_sd_overflow_ready();
+uint64_t fs_sd_card_size_bytes();
+uint64_t fs_sd_total_bytes();
+uint64_t fs_sd_used_bytes();
+String   fs_sd_overflow_listing();
+
 #endif
