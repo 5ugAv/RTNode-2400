@@ -26,6 +26,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
+#include "BirthCry.h"   // first-flash LED celebration + health-ack blink
 
 // CBA Firewall Mode
 // NOTE: FIREWALL_MODE is the compile flag for Firewall Mode.
@@ -1092,6 +1093,9 @@ void setup() {
     ERROR("RNS startup failed: " + std::string(e.what()));
   }
 #endif  // HAS_RNS
+  // First boot after a fresh flash: the birth cry (BirthCry.h). NVS-gated
+  // to the build stamp, so later power-cycles boot quietly.
+  birth_cry_maybe();
 }
 
 void lora_receive() {

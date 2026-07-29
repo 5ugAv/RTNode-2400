@@ -28,24 +28,34 @@
 #include <esp_heap_caps.h>
 
 #include "FirewallMode.h"   // FirewallState / firewall_state
+#include "HealthBeaconPack.h"  // HB_* flags + v2 power/link sentinels (shared codec)
 
 // Fork version string. NOTE: this is the single in-firmware source of truth
 // for the RTNode fork version (upstream RNode's MAJ_VERS/MIN_VERS is a
 // separate protocol version). Bump it in lockstep with release tags.
 #ifndef RTNODE_FORK_VERSION
-#define RTNODE_FORK_VERSION "0.6.2"
+#define RTNODE_FORK_VERSION "0.7.0"   // 0.7.0: v2 health beacon (battery + link tail)
 #endif
 // Numeric components of RTNODE_FORK_VERSION for the binary health beacon.
 // Keep these in sync with the string above on every release.
 #define RTNODE_FW_MAJOR 0
-#define RTNODE_FW_MINOR 6
-#define RTNODE_FW_PATCH 2
+#define RTNODE_FW_MINOR 7
+#define RTNODE_FW_PATCH 0
 
 #define RTNODE_HEALTH_PORT 80
 
 // radio_online lives in Config.h; extern-declared here so this header does
 // not depend on include ordering.
 extern bool radio_online;
+
+// Battery globals maintained by the firmware's PMU path (Config.h declares,
+// Power.h's measure_battery() updates them from loop()); extern-declared for
+// the same include-ordering reason. battery_state: 0x00 unknown,
+// 0x01 discharging, 0x02 charging, 0x03 charged (Config.h BATTERY_STATE_*).
+extern bool    battery_installed;
+extern float   battery_voltage;
+extern float   battery_percent;
+extern uint8_t battery_state;
 
 // Runtime status of the local (LAN) TCP server. Defined in the main sketch,
 // where local_tcp_interface_ptr and the TcpInterface type are in scope.
@@ -84,6 +94,18 @@ struct HealthSnapshot {
     bool        local_tcp_server_up;
     bool        local_tcp_client_connected;
 
+    // Power (v2 beacon). battery_mv==0 / battery_pct==0xFF => not reported (the
+    // VBAT read is board-gated; see health_read_battery_mv()).
+    uint16_t    battery_mv;
+    uint8_t     battery_pct;
+    bool        on_battery;
+    bool        charging;
+    bool        on_solar;
+    bool        on_mains;
+    // The node's own view of its LoRa link (last received packet). -128 = unknown.
+    int8_t      lora_snr_db;
+    int8_t      lora_rssi_dbm;
+
     const char* node_name;
 };
 
@@ -111,6 +133,59 @@ inline const char* health_reset_reason_str() {
         case ESP_RST_SDIO:      return "sdio";
         default:                return "unknown";
     }
+}
+
+// ─── Battery (v2 beacon) ─────────────────────────────────────────────────────
+// VBAT sensing is board-specific and the divider + ADC pin MUST be verified per
+// board before enabling — a wrong pin reads garbage and a wrong divider reports
+// a false voltage that could trip a low-battery alert. So this stays OFF until
+// RTNODE_VBAT_ADC_PIN is defined for the target board (verified on the bench);
+// until then battery reads "not reported" and the beacon simply omits it —
+// honest, never guessed.
+//
+// Heltec reference to CONFIRM before enabling (per-board, do not assume V4==V3):
+//   Heltec V3: ADC on GPIO1, enable the divider by driving ADC_Ctrl (GPIO37)
+//              LOW during the read, resistor divider ratio ≈ 4.9.
+// Define these (e.g. in Config.h or a build flag) once measured on the bench:
+//   #define RTNODE_VBAT_ADC_PIN   1
+//   #define RTNODE_VBAT_CTRL_PIN  37     // optional: divider-enable pin
+//   #define RTNODE_VBAT_DIVIDER   4.9f
+inline uint16_t health_read_battery_mv() {
+#ifdef RTNODE_VBAT_ADC_PIN
+  #ifdef RTNODE_VBAT_CTRL_PIN
+    pinMode(RTNODE_VBAT_CTRL_PIN, OUTPUT);
+    digitalWrite(RTNODE_VBAT_CTRL_PIN, LOW);   // enable the resistor divider
+    delay(10);
+  #endif
+    uint32_t pin_mv = analogReadMilliVolts(RTNODE_VBAT_ADC_PIN);
+  #ifdef RTNODE_VBAT_CTRL_PIN
+    digitalWrite(RTNODE_VBAT_CTRL_PIN, HIGH);  // disable divider to save power
+  #endif
+    uint32_t mv = (uint32_t)(pin_mv * (float)RTNODE_VBAT_DIVIDER);
+    return (mv > 0xFFFF) ? 0xFFFF : (uint16_t)mv;
+#else
+    return HB_BATTERY_MV_UNKNOWN;   // no verified VBAT path -> not reported
+#endif
+}
+
+// Single-cell Li-ion state-of-charge (%) from pack millivolts — a rough OCV
+// curve mirroring reticulum-tool monitor/ups.py so both ends agree. 0xFF when
+// there is no battery reading.
+inline uint8_t health_battery_percent(uint16_t mv) {
+    if (mv == HB_BATTERY_MV_UNKNOWN) return HB_BATTERY_PCT_UNKNOWN;
+    float v = mv / 1000.0f;
+    static const float bp_v[]  = {3.00f,3.30f,3.45f,3.55f,3.65f,3.75f,3.85f,3.95f,4.05f,4.15f,4.20f};
+    static const int   bp_pct[]= {0,    8,    15,   25,   40,   55,   70,   82,   92,   98,   100};
+    const int N = 11;
+    if (v <= bp_v[0])   return 0;
+    if (v >= bp_v[N-1]) return 100;
+    for (int i = 1; i < N; i++) {
+        if (v <= bp_v[i]) {
+            float f = (v - bp_v[i-1]) / (bp_v[i] - bp_v[i-1]);
+            return (uint8_t)(bp_pct[i-1] + f * (bp_pct[i] - bp_pct[i-1]));
+        }
+    }
+    return 100;
 }
 
 // ─── Collection ─────────────────────────────────────────────────────────────
@@ -158,6 +233,42 @@ inline void collect_health(HealthSnapshot& h) {
     h.local_tcp_client_connected  = firewall_state.ap_tcp_connected;
 
     h.node_name = firewall_state.node_name;
+
+    // Power (v2 beacon). PRIMARY source: the firmware's own PMU path (Power.h)
+    // — loop() -> update_pmu() -> measure_battery() maintains these globals
+    // with the vendor-verified per-board pins (Heltec V4: pin_vbat=1,
+    // pin_ctrl=37) and charge-state detection. No guessed pins, no second ADC
+    // path. battery_installed goes true on the first valid sample, so a board
+    // with no battery honestly reports "not reported".
+    if (battery_installed && battery_voltage > 0.1f) {
+        float mv = battery_voltage * 1000.0f;
+        h.battery_mv  = (mv > 65535.0f) ? 65535 : (uint16_t)mv;
+        float pct = battery_percent;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+        h.battery_pct = (uint8_t)(pct + 0.5f);
+        h.on_battery  = true;
+        // CHARGING and CHARGED both mean "on external power, not running
+        // down" — either way a low battery must not raise a battery alert.
+        h.charging    = (battery_state == 0x02 /*CHARGING*/
+                         || battery_state == 0x03 /*CHARGED*/);
+    } else {
+        // FALLBACK for boards without a PMU path: the explicit board-gated
+        // ADC read (inert until RTNODE_VBAT_ADC_PIN is bench-verified).
+        h.battery_mv  = health_read_battery_mv();
+        h.battery_pct = health_battery_percent(h.battery_mv);
+        h.on_battery  = (h.battery_mv != HB_BATTERY_MV_UNKNOWN);
+        h.charging    = false;
+    }
+#ifdef RTNODE_POWER_SOLAR
+    h.on_solar = true;  h.on_mains = false;   // build flag: solar-powered node
+#else
+    h.on_solar = false; h.on_mains = false;
+#endif
+    // The node's own LoRa link view — wire to the radio's last-RX SNR/RSSI at
+    // the bench; unknown for now (the medic also measures the announce RSSI).
+    h.lora_snr_db   = HB_LORA_LINK_UNKNOWN;
+    h.lora_rssi_dbm = HB_LORA_LINK_UNKNOWN;
 }
 
 // ─── JSON serialization ─────────────────────────────────────────────────────
