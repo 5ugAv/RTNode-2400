@@ -73,9 +73,12 @@ inline uint8_t health_reset_reason_code() {
     }
 }
 
-// Gather live health into the 14-byte wire payload. `fault` is supplied by the
-// caller (the 3-attempt fault debounce lands in a later increment; false today).
-inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN], bool fault = false) {
+// Gather live health into the 20-byte v2 wire payload (v1 prefix + power/link
+// tail). `fault` is supplied by the caller (the 3-attempt fault debounce lands
+// in a later increment; false today). Battery is board-gated in collect_health:
+// until a verified VBAT pin is enabled it packs the "not reported" sentinels, so
+// the payload is always a valid v2 beacon the tool decodes.
+inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_V2], bool fault = false) {
     HealthSnapshot h;
     collect_health(h);
 
@@ -85,21 +88,29 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN], bool fault = fal
     int32_t  r         = h.wifi_rssi;                  // 0 when WiFi down
     int8_t   rssi      = (r < -128) ? -128 : (r > 127) ? 127 : (int8_t)r;
 
-    health_pack_beacon(out,
+    uint8_t power_flags =
+          (h.on_battery ? HB_PWR_ON_BATTERY : 0)
+        | (h.charging   ? HB_PWR_CHARGING   : 0)
+        | (h.on_solar   ? HB_PWR_SOLAR      : 0)
+        | (h.on_mains   ? HB_PWR_MAINS      : 0);
+
+    health_pack_beacon_v2(out,
         uptime_s, heap_kb, rssi, health_reset_reason_code(),
         h.wifi_connected, h.lora_online, h.tcp_backbone_connected,
         h.local_tcp_server_up, h.wdt_armed, h.psram, fault, airtime_lock,
         (uint8_t)BOARD_MODEL,
-        RTNODE_FW_MAJOR, RTNODE_FW_MINOR, RTNODE_FW_PATCH);
+        RTNODE_FW_MAJOR, RTNODE_FW_MINOR, RTNODE_FW_PATCH,
+        h.battery_mv, h.battery_pct, power_flags,
+        h.lora_snr_db, h.lora_rssi_dbm);
 }
 
 // Emit one beacon announce immediately (also used by the on-demand poll reply).
 inline void health_beacon_send() {
     if (!health_destination) return;
-    uint8_t payload[HEALTH_BEACON_LEN];
+    uint8_t payload[HEALTH_BEACON_LEN_V2];
     health_build_beacon(payload, health_fault);
     RNS::Bytes app_data;
-    app_data.append(payload, HEALTH_BEACON_LEN);
+    app_data.append(payload, HEALTH_BEACON_LEN_V2);
     health_destination.announce(app_data);
     // Verification log: the exact bytes on the wire + the destination hash the
     // tool keys on. Decode against monitor/health_beacon.py.
@@ -118,6 +129,27 @@ inline void health_request_handler(const RNS::Bytes& data, const RNS::Packet& pa
     if (data.size() >= 1 && data[0] == HB_OPCODE_FULL_HEALTH) {
         Serial.println("[HealthBeacon] on-demand poll request (0x01) -> announcing now");
         health_beacon_send();
+        // Visible acknowledgement at the node: two green pulses (operator
+        // request — "pulse the green sequence twice on health check"). Reply
+        // is already on the air; ~0.5 s of LED time after it is harmless.
+        health_ack_blink();
+    }
+    else if (data.size() >= 1 && data[0] == HB_OPCODE_IDENTIFY) {
+        // Identify: replay the birth cry so the operator can spot this exact
+        // board on the bench / in the field. Blocking ~4 s — acceptable, it is
+        // an operator-invoked rarity.
+        Serial.println("[HealthBeacon] identify request (0x02) -> birth cry");
+        birth_cry();
+    }
+    else if (data.size() >= 1 && data[0] == HB_OPCODE_LED_TEST) {
+        // LED test: solid green long enough to photograph / probe the pixel
+        // wiring. Blocking 15 s — operator-invoked bench tool only.
+        Serial.println("[HealthBeacon] LED test (0x03) -> solid green 15s");
+        #if defined(HAS_NP) && HAS_NP == true
+        npset(0, 0xFF, 0);
+        delay(15000);
+        npset(0, 0, 0);
+        #endif
     }
     // Unknown/empty opcode: no-op (deliberately not a fault).
 }
