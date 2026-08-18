@@ -369,6 +369,27 @@ PORT ?= UNSET
 # Espressif is resolved at the same moment, and the flash is refused if they turn
 # out to be the same node. A ttyACM number is not an identity; a by-id name is.
 VARIANT ?= release
+# BISECT TARGET, one variable changed: RNS_USE_ALLOCATOR is dropped.
+#
+# That flag is what makes OS.cpp override GLOBAL operator new (OS.cpp:48), so
+# with it every allocation in the program -- the Arduino core's included -- goes
+# through TLSF, and the pool is built lazily inside the first new() call. The
+# constructor table says that first call lands during STATIC INITIALISATION:
+# four microReticulum containers construct at positions 5-8 of 19, while Serial
+# is not constructed until 17. So anything that goes wrong in there happens
+# before there is any way to report it -- which is exactly the observed failure:
+# flashes clean, resets, never enumerates USB, no LED, no log.
+#
+# Without the flag, operator new is the ordinary one and TLSF is inert (its only
+# use is inside that override). If THIS boots, the fault is in that path and not
+# in RNS itself. Keep HAS_RNS so the comparison is otherwise like-for-like.
+firmware-techo-noalloc: sketch-link
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 --output-dir $(CURDIR)/build/techo-noalloc \
+	  --library lib/microReticulum \
+	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -fexceptions" \
+	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
+	  .
+
 flash-techo:
 	@z="$(CURDIR)/build/techo-$(VARIANT)/RNode_Firmware.ino.zip"; 	test -f "$$z" || { echo "No image: $$z (make firmware-techo$(if $(filter bringup,$(VARIANT)),-bringup,))"; exit 1; }; 	link=$$(ls /dev/serial/by-id/*LilyGo_T-Echo* 2>/dev/null | head -1); 	test -n "$$link" || { echo "REFUSING: no T-Echo on the bus (double-tap RESET for DFU)"; exit 1; }; 	port=$$(readlink -f "$$link"); 	for e in /dev/serial/by-id/*Espressif*; do 	  [ -e "$$e" ] || continue; 	  if [ "$$(readlink -f $$e)" = "$$port" ]; then 	    echo "REFUSING: $$port is the medic's own radio"; exit 1; fi; 	done; 	echo "variant: $(VARIANT)"; echo "target : $$port"; 	echo "image  : $$(stat -c%s $$z) bytes"; 	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
 
