@@ -550,8 +550,15 @@ public:
         if (beacon_started_ms_ == 0 || (int32_t)(now - beacon_until_) >= 0) {
             beacon_started_ms_ = now; // fresh engagement (wasn't already playing)
         }
+        // Signed-difference idiom (matches :550 and resolve()'s :564 below),
+        // not a plain magnitude compare -- a plain `candidate > beacon_until_`
+        // breaks exactly at the millis() rollover: right after the wrap,
+        // candidate is a small absolute value that is numerically LESS than
+        // a stale pre-wrap beacon_until_, so the window would silently fail
+        // to extend (or the beacon would read as already-lapsed) for calls
+        // landing near that boundary.
         uint32_t candidate = now + EPD_GLYPH_BEACON_TOTAL_MS;
-        if (candidate > beacon_until_) beacon_until_ = candidate;
+        if ((int32_t)(candidate - beacon_until_) > 0) beacon_until_ = candidate;
     }
 
     EpdGlyphState resolve(uint32_t now) const {

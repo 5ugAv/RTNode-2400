@@ -191,11 +191,43 @@ firmware-heltec_t114:
 # 630528 bytes flash (77% of 815104, +6008 bytes), 74484 bytes static RAM
 # (31% of 237568, +4160 bytes). Compiles and links, zero warnings from any
 # touched file. Still NOT yet run on hardware.
-firmware-techo:
-	arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 -e \
+# Bring-up variant: pins the TLSF pool to 32KB instead of 80% of free heap, and
+# builds with CFG_DEBUG=1 so vApplicationStackOverflowHook actually logs and hangs
+# instead of silently returning (it is a no-op in Release). Use this for the FIRST
+# boot on new hardware, then fall back to firmware-techo once it is known good.
+# arduino-cli insists the sketch FOLDER be named after the .ino, and this tree
+# is checked out as RTNode-2400 while its sketch is RNode_Firmware.ino. That
+# mismatch is why copies of this tree kept appearing (techo-test/, tb2/,
+# overlay_test/ ...), each drifting from the others. A symlink costs nothing and
+# keeps ONE tree: the link points at whatever directory this Makefile is in, so
+# it follows a rename, a worktree, or a clone without being edited.
+# SEPARATE OUTPUT DIRS, and not for tidiness. arduino-cli does NOT put a menu
+# option (debug=l1) in the export path, so firmware-techo and
+# firmware-techo-bringup both landed in build/adafruit.nrf52.pca10056/ and the
+# second silently overwrote the first. Two images that behave differently, one
+# filename, nothing on disk saying which is which -- and the flasher takes a
+# path. On 2026-08-19 the only way to tell them apart after the fact was that
+# the debug build is 24KB bigger.
+SKETCH_LINK := $(HOME)/.build-sketch/RNode_Firmware
+
+.PHONY: sketch-link
+sketch-link:
+	@mkdir -p $(dir $(SKETCH_LINK))
+	@ln -sfn $(CURDIR) $(SKETCH_LINK)
+
+firmware-techo-bringup: sketch-link
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056:debug=l1 --output-dir $(CURDIR)/build/techo-bringup \
 	  --library lib/microReticulum \
-	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -DRNS_USE_TLSF=1 -DRNS_USE_ALLOCATOR=1 -fexceptions" \
-	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++"
+	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -DRNS_USE_TLSF=1 -DRNS_USE_ALLOCATOR=1 -DRNS_TLSF_FIXED_SIZE=32768 -fexceptions" \
+	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
+	  .
+
+firmware-techo: sketch-link
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 --output-dir $(CURDIR)/build/techo-release \
+	  --library lib/microReticulum \
+	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -DRNS_USE_TLSF=1 -DRNS_USE_ALLOCATOR=1 -DRNS_TLSF_FIXED_SIZE=32768 -fexceptions" \
+	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
+	  .
 
 # Off-device, native g++ contract test for EpdGlyph.h (the T-Echo status-
 # glyph state machine + renderer) — no Arduino toolchain needed. Same
@@ -328,6 +360,18 @@ upload-heltec_t114:
 # reboots where ttyACM* ordering is not:
 #   make upload-techo PORT=/dev/serial/by-id/usb-Nordic_NRF52_DK_<serial>-if00
 PORT ?= UNSET
+# Flash a built T-Echo image over serial DFU (board must be in the bootloader --
+# double-tap RESET). VARIANT picks which image: release or bringup.
+#
+# THE GUARD IS THE POINT. This medic carries its own radio, JONESEY, permanently
+# attached, and a naive "first port" pick has already tried to flash it once
+# (2026-08-05). So the target is found by its LilyGo by-id name, the medic's own
+# Espressif is resolved at the same moment, and the flash is refused if they turn
+# out to be the same node. A ttyACM number is not an identity; a by-id name is.
+VARIANT ?= release
+flash-techo:
+	@z="$(CURDIR)/build/techo-$(VARIANT)/RNode_Firmware.ino.zip"; 	test -f "$$z" || { echo "No image: $$z (make firmware-techo$(if $(filter bringup,$(VARIANT)),-bringup,))"; exit 1; }; 	link=$$(ls /dev/serial/by-id/*LilyGo_T-Echo* 2>/dev/null | head -1); 	test -n "$$link" || { echo "REFUSING: no T-Echo on the bus (double-tap RESET for DFU)"; exit 1; }; 	port=$$(readlink -f "$$link"); 	for e in /dev/serial/by-id/*Espressif*; do 	  [ -e "$$e" ] || continue; 	  if [ "$$(readlink -f $$e)" = "$$port" ]; then 	    echo "REFUSING: $$port is the medic's own radio"; exit 1; fi; 	done; 	echo "variant: $(VARIANT)"; echo "target : $$port"; 	echo "image  : $$(stat -c%s $$z) bytes"; 	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
+
 upload-techo:
 	@test "$(PORT)" != "UNSET" || { echo "Refusing: pass PORT=/dev/serial/by-id/... explicitly"; exit 1; }
 	arduino-cli upload -p $(PORT) --fqbn adafruit:nrf52:pca10056

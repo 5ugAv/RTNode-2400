@@ -968,6 +968,33 @@ void setup() {
         esp_task_wdt_reset();
       #endif
 
+#if BOARD_MODEL == BOARD_TECHO
+      // The T-Echo's LittleFS partition is 28,672 bytes (previously
+      // verified). The library default path_table_maxsize/maxpersist is
+      // 100 (Transport.cpp), and Persistence.h persists the table as JSON
+      // with hex-encoded hashes -- no USE_MSGPACK on this build. Measured
+      // empirically against the real ArduinoJson 7.4.3 this firmware links
+      // (field-for-field match to Persistence.h's convertToJson()): one
+      // entry at MAX_RANDOM_BLOBS=16 (Type.h) serializes to 826 bytes
+      // including its outer map-key overhead, so 100 such entries is
+      // ~82,600 bytes -- 2.9x the partition, and the hard worst-case limit
+      // is 34 entries. FIREWALL_MODE (ESP32 targets) already caps this for
+      // a *different* reason (RAM, not flash) at 24; reused here with the
+      // same number, which leaves ~31% of the partition as margin (19,826
+      // of 28,672 bytes) for framing overhead and estimation error.
+      //
+      // Without this, Persistence::serialize()'s per-call stream.write()
+      // return values go unchecked (FileStream.h), so a table that
+      // outgrows the partition doesn't error -- it writes a truncated,
+      // unparseable JSON file. The next boot's deserialize() then fails to
+      // parse it and comes back with zero entries: not "lose the newest
+      // few routes" but "lose the whole table," silently, exactly the
+      // failure this cap exists to prevent. (Reasoned from source --
+      // the truncation itself hasn't been reproduced on hardware.)
+      RNS::Transport::path_table_maxsize(24);
+      RNS::Transport::path_table_maxpersist(24);
+#endif
+
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
 #ifdef FIREWALL_MODE
@@ -2572,6 +2599,7 @@ void work_while_waiting() { loop(); }
 void loop() {
   #if BOARD_MODEL == BOARD_TECHO
     led_online_tick();   // green breath = Reticulum has opened this radio
+    check_loop_stack_headroom();
   #endif
 
 

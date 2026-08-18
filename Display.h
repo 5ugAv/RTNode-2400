@@ -225,6 +225,16 @@
 // same single declaration, just earlier in this translation unit.
 bool display_tx = false;
 
+// Same reason, same treatment: the T-Echo glyph block's epd_glyph_service()
+// (below) needs to skip its own panel writes while the panel is blanked
+// (see the DISPLAY_BLANKING_TIMEOUT idle-blank feature, further down in
+// this file) so it doesn't perform a genuine ~500ms blocking e-paper
+// refresh of just the glyph corner while the rest of the panel sits
+// intentionally dark. Moved up alongside display_tx for the same
+// forward-reference reason; the real blanking logic (display_blanking_timeout,
+// last_unblank_event, the set-true/set-false sites) stays where it was.
+bool display_blanked = false;
+
 // ── T-Echo status glyph (EpdGlyph.h) ────────────────────────────────────
 // See EpdGlyph.h for the full design writeup (why event-driven, not
 // clock-driven; why this doesn't sample a NeoPixel colour like the Heltec
@@ -298,6 +308,23 @@ bool display_tx = false;
   // it is "make it rarer still" (e.g. drop the bounded burst frames and
   // show only a single static badge per event, like the other states).
   void epd_glyph_service(uint32_t now) {
+    // Panel is intentionally dark (DISPLAY_BLANKING_TIMEOUT idle-blank,
+    // set in update_display() further down this file) -- do not touch it.
+    // Without this, a real state transition during the blanked window
+    // still ran a genuine ~500ms blocking displayWindow() write of the
+    // glyph corner while the rest of the panel stayed blank (the exact
+    // wear this module's whole event-driven design exists to avoid — see
+    // EpdGlyph.h's header note), and the display_tx peek-without-clear
+    // below (line ~260) kept re-arming epd_glyph_tx_level_until every
+    // loop iteration with nothing left to ever clear the underlying
+    // display_tx latch while blanked, since draw_waterfall() -- the only
+    // thing that clears it -- is itself skipped while blank (see
+    // update_display()'s `if (blank) {...} else { ... update_stat_area()
+    // ...}` split). Bailing out here fixes both: state re-syncs cleanly
+    // on the next call after unblanking, since set_*() below just tracks
+    // current values every call, not edges.
+    if (display_blanked) return;
+
     epd_glyph.set_not_ready(!hw_ready);
     epd_glyph.set_console(console_active);
     epd_glyph.set_fault(radio_error);
@@ -350,7 +377,6 @@ uint32_t last_disp_update = 0;
 uint32_t last_unblank_event = 0;
 uint32_t display_blanking_timeout = DISPLAY_BLANKING_TIMEOUT;
 uint8_t display_unblank_intensity = display_intensity;
-bool display_blanked = false;
 bool recondition_display = false;
 int disp_update_interval = 1000/disp_target_fps;
 // PRE-EXISTING BUG, found and fixed while wiring the status glyph: this was

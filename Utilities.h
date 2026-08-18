@@ -459,6 +459,54 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
 		void led_id_on()  { }
 		void led_id_off() { }
+
+		// ── Loop-task stack headroom monitor ──────────────────────────────
+		// LOOP_STACK_SZ is 4096 bytes (256 words), #define'd unconditionally
+		// in the Adafruit core's main.cpp (outside this repo, not guarded by
+		// #ifndef, so a sketch-side -D can't override it) and
+		// vApplicationStackOverflowHook (core's rtos.cpp) is a genuine no-op
+		// in a Release build (CFG_DEBUG=0): LOG_LV1(...) compiles to nothing
+		// and `while(CFG_DEBUG) yield();` is `while(0)`, so an overflow
+		// corrupts whatever's next in RAM silently instead of being caught.
+		// Raising the ceiling means patching that vendored core file, which
+		// is a global, unversioned change to every sketch built against this
+		// Arduino15 install -- not something to do blind. This is the cheap,
+		// safe alternative: real field data on how close normal operation
+		// actually gets, so "is 4KB enough" stops being a guess.
+		//
+		// uxTaskGetStackHighWaterMark(NULL) reports loop_task's lowest-ever
+		// remaining stack in words (FreeRTOS paints the stack at creation and
+		// tracks the deepest point ever reached, continuously, regardless of
+		// when this is polled -- StackType_t is 4 bytes on this Cortex-M4
+		// port). Logged once shortly after boot (setup()'s identity
+		// generation / crypto / filesystem mount are the likely deepest
+		// stack users) and again only when a new low is reached, so it stays
+		// informative without becoming routine noise on the same serial line
+		// the KISS/host protocol uses (existing practice -- see on_log() in
+		// the .ino, which already writes plain text to the same Serial).
+		#define STACK_WARN_FLOOR_BYTES 1024u   // 25% of the 4096-byte stack
+
+		void check_loop_stack_headroom() {
+			static bool logged_once = false;
+			static uint32_t last_reported_bytes_free = 0xFFFFFFFFu;
+			static uint32_t last_check_ms = 0;
+			uint32_t now = millis();
+			if (logged_once && (now - last_check_ms) < 300000u) return; // <=1x/5min
+			last_check_ms = now;
+
+			uint32_t bytes_free = (uint32_t)uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t);
+
+			if (!logged_once || bytes_free < last_reported_bytes_free) {
+				last_reported_bytes_free = bytes_free;
+				Serial.print("[STACK] loop task headroom: ");
+				Serial.print(bytes_free);
+				Serial.print(" / 4096 bytes free (lowest ever)");
+				if (bytes_free < STACK_WARN_FLOOR_BYTES) Serial.print("  ** LOW **");
+				Serial.println();
+				Serial.flush();
+			}
+			logged_once = true;
+		}
 	#elif BOARD_MODEL == BOARD_XIAO_NRF
 		// XIAO nRF52840 LEDs are active HIGH (LED_STATE_ON = 1)
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
