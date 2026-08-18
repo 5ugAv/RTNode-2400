@@ -397,6 +397,62 @@ extern RNS::Reticulum reticulum;
 		void led_id_on()  { }
 		void led_id_off() { }
   #elif BOARD_MODEL == BOARD_TECHO
+		// --- GREEN = "Reticulum has opened this radio" -----------------------
+		// The board has three discrete LEDs. Red is TX and blue is RX, already
+		// wired and already polarity-correct. Green was pinMode()'d at boot and
+		// never once written — this is the first thing to drive it.
+		//
+		// BRIGHTNESS IS JONESEY'S PROTOCOL, NOT A NEW ONE. The Heltec Tracker's
+		// idle breath is TB_BREATH_MIN 6 -> TB_BREATH_MAX 48 of 255 over
+		// TB_BREATH_MS 4200 (Display.h). That is ~2.4% -> ~19%, and note the
+		// floor is 6 and NOT 0: it never goes fully dark. It is a dim ember that
+		// swells, not a pulse that blinks out — a light that fully extinguishes
+		// reads as "something stopped", which is the opposite of the intended
+		// meaning. Same numbers, same period, same cosine curve here, so the two
+		// devices are recognisably the same family.
+		//
+		// Caveat worth keeping honest: those are TFT pixel values on the Tracker
+		// and PWM duty on an LED here. The numbers are identical; the perceived
+		// brightness will not be exactly, because an LED and a backlit pixel do
+		// not map the same way. Judge it on the bench in a dark room and adjust
+		// GREEN_BREATH_MIN/MAX if it reads wrong — but adjust BOTH devices
+		// together, or the family resemblance is lost.
+		//
+		// It follows radio_online, NOT power. radio_online goes true only when
+		// the host sends CMD_RADIO_STATE=on — i.e. Reticulum has actually opened
+		// this radio. A breathing green means the stack is up; a dark green means
+		// the board is powered but nobody is talking to it. That distinction is
+		// the whole point, and it is the same one the Tracker's screen makes.
+		//
+		// ACTIVE LOW on this board: 255 is off, 0 is full. So a brightness B maps
+		// to duty (255 - B). Getting this backwards gives an indicator that is
+		// brightest whenever the node is idle, which is exactly wrong.
+		//
+		// Non-blocking by construction: no delay(). The main loop samples radio
+		// status every 3ms (Config.h STATUS_INTERVAL_MS) and must not be stalled.
+		#define GREEN_BREATH_MS   4200   // == TB_BREATH_MS
+		#define GREEN_BREATH_MIN  6      // == TB_BREATH_MIN (never fully dark)
+		#define GREEN_BREATH_MAX  48     // == TB_BREATH_MAX (~19%, never full)
+		#define GREEN_TICK_MS     33
+
+		void led_online_tick() {
+			static uint32_t last_tick = 0;
+			static bool was_online = false;
+			uint32_t now = millis();
+			if (!radio_online) {
+				if (was_online) { digitalWrite(PIN_LED_GREEN, LED_OFF); was_online = false; }
+				return;
+			}
+			was_online = true;
+			if (now - last_tick < GREEN_TICK_MS) return;
+			last_tick = now;
+			float ph  = (now % GREEN_BREATH_MS) / (float)GREEN_BREATH_MS;
+			float b01 = 0.5f - 0.5f * cosf(2.0f * 3.14159265f * ph);
+			uint8_t bright = (uint8_t)(GREEN_BREATH_MIN
+			               + (GREEN_BREATH_MAX - GREEN_BREATH_MIN) * b01);
+			analogWrite(PIN_LED_GREEN, (uint8_t)(255 - bright));   // active low
+		}
+
 		void led_rx_on()  { digitalWrite(pin_led_rx, LED_ON); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LED_OFF); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, LED_ON); }
@@ -570,6 +626,16 @@ void led_indicate_boot_error() {
 			npset(0xFF, 0xFF, 0xFF);
 		}
 	#else
+		#if BOARD_MODEL == BOARD_TECHO && HAS_DISPLAY == true
+			// This is a `while(true)` hang — loop() never runs again after
+			// this point, so this is the ONLY chance the e-paper ever gets
+			// to show anything for a boot_error. Draw the FAULT glyph once,
+			// as a real full-panel refresh, before falling into the LED
+			// blink below (which keeps running forever and costs nothing
+			// extra — LEDs have no refresh-cycle wear budget, unlike the
+			// panel). See Display.h's epd_glyph_show_fault_forever().
+			if (disp_ready) epd_glyph_show_fault_forever();
+		#endif
 		while (true) {
 		    led_tx_on();
 		    led_rx_off();

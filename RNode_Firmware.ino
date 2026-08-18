@@ -2570,6 +2570,10 @@ void tx_queue_handler() {
 void work_while_waiting() { loop(); }
 
 void loop() {
+  #if BOARD_MODEL == BOARD_TECHO
+    led_online_tick();   // green breath = Reticulum has opened this radio
+  #endif
+
 
 #ifdef HAS_RNS
   // CBA
@@ -2764,6 +2768,17 @@ void loop() {
 
   #if HAS_DISPLAY
     if (disp_ready && !display_updating) update_display();
+  #endif
+
+  // Status glyph (EpdGlyph.h / Display.h). Runs every loop() iteration
+  // deliberately — much more often than update_display()'s own
+  // epd_update_interval gate — because it is event-driven, not clock-
+  // driven: EpdGlyphMachine::tick() no-ops on almost every call and only
+  // touches the panel on a genuine state transition. See Display.h for the
+  // full design writeup and EpdGlyph.h for why this is not a periodic
+  // animation loop.
+  #if HAS_DISPLAY && BOARD_MODEL == BOARD_TECHO
+    if (disp_ready && !display_updating) epd_glyph_service(millis());
   #endif
 
   // LED solid when operational on V3/V4 boards (yield to fast blink during white screen).

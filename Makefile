@@ -1,3 +1,20 @@
+# ============================================================================
+# WARNING: /dev/ttyACM0 IS HARDCODED IN ~30 UPLOAD TARGETS IN THIS FILE.
+#
+# That is safe on a bench machine with one board attached. It is NOT safe on a
+# Node Medic, where /dev/ttyACM0 is the medic's OWN permanently-attached radio.
+# Running any of those targets there aims a flash — or an rnodeconf WRITE — at
+# the tool's own radio. This project has already flashed its own radio once by
+# picking a port positionally.
+#
+# `upload-techo` has been converted to require an explicit PORT (see below).
+# The rest have NOT been converted, because they are untested here. Before
+# running any other upload-* target on a medic, pass the port by hand and use a
+# /dev/serial/by-id/ path, which is stable across reboots where ttyACM* is not.
+#
+# Audited 2026-08-18.
+# ============================================================================
+
 # Copyright (C) 2024, Mark Qvist
 
 # This program is free software: you can redistribute it and/or modify
@@ -52,6 +69,8 @@ prep-nrf:
 	arduino-cli core install Heltec_nRF52:Heltec_nRF52 --config-file arduino-cli.yaml
 	arduino-cli core install adafruit:nrf52 --config-file arduino-cli.yaml
 	arduino-cli lib install "GxEPD2"
+	arduino-cli lib install "ArduinoJson"
+	arduino-cli lib install "MsgPack"
 	arduino-cli config set library.enable_unsafe_install true
 	arduino-cli lib install --git-url https://github.com/liamcottle/esp8266-oled-ssd1306#e16cee124fe26490cb14880c679321ad8ac89c95
 	pip install adafruit-nrfutil --upgrade
@@ -146,8 +165,45 @@ firmware-rak4631:
 firmware-heltec_t114:
 	arduino-cli compile --log --fqbn Heltec_nRF52:Heltec_nRF52:HT-n5262 -e --build-property "build.partitions=no_ota" --build-property "upload.maximum_size=2097152" --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x3C\""
 
+# LilyGO T-Echo / T-Echo Plus (nRF52840 + SX1262 + 1.54" e-paper), BOARD_MODEL 0x44.
+#
+# This target used to pass ONLY -DBOARD_MODEL, which quietly built a plain RNode
+# rather than an RTNode: without -DHAS_RNS the C++ Reticulum stack is compiled
+# out entirely, and the build then fails on VERBOSEF (lib/microReticulum/Log.h)
+# because two call sites in the .ino are unguarded. Verified 2026-08-18.
+#
+# Three things arduino-cli needs that PlatformIO does for free:
+#   --library            lib/ is NOT on the include path here, unlike PlatformIO's
+#                        lib_dir, so microReticulum must be named explicitly.
+#   -fexceptions         the Adafruit core compiles -fno-exceptions; microReticulum
+#                        throws std::runtime_error. extra_flags land after the core's
+#                        flags, so this wins.
+#   -lstdc++ -lsupc++    the core also links -nostdlib with nano.specs, so nothing
+#                        provides the exception runtime and the link fails with 79
+#                        undefined references. compiler.libraries.ldflags is empty
+#                        upstream, which makes it the clean hook.
+#
+# Result on 2026-08-18: 624520 bytes flash (76% of 815104), 70324 bytes static RAM
+# (29% of 237568). Compiles and links; NOT yet run on hardware.
+#
+# Result on 2026-08-18, after adding the EpdGlyph.h status-glyph state
+# machine + T-Echo integration (Display.h/Utilities.h/RNode_Firmware.ino):
+# 630528 bytes flash (77% of 815104, +6008 bytes), 74484 bytes static RAM
+# (31% of 237568, +4160 bytes). Compiles and links, zero warnings from any
+# touched file. Still NOT yet run on hardware.
 firmware-techo:
-	arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 -e --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x44\""
+	arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 -e \
+	  --library lib/microReticulum \
+	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -DRNS_USE_TLSF=1 -DRNS_USE_ALLOCATOR=1 -fexceptions" \
+	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++"
+
+# Off-device, native g++ contract test for EpdGlyph.h (the T-Echo status-
+# glyph state machine + renderer) — no Arduino toolchain needed. Same
+# precedent as reticulum-tool/tests/test_firmware_beacon_contract.py
+# compiling HealthBeaconPack.h standalone.
+test-epd-glyph:
+	g++ -std=c++11 -Wall -Wextra -Itests/.. -o /tmp/test_epd_glyph tests/test_epd_glyph_native.cpp
+	/tmp/test_epd_glyph
 
 firmware-xiao_s3:
 	arduino-cli compile --log --fqbn "esp32:esp32:XIAO_ESP32S3" -e --build-property "build.partitions=no_ota" --build-property "upload.maximum_size=2097152" --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x3E\""
@@ -266,10 +322,17 @@ upload-heltec_t114:
 	@sleep 1
 	rnodeconf /dev/ttyACM0 --firmware-hash $$(./partition_hashes from_device /dev/ttyACM0)
 
+# PORT IS NOT HARDCODED. /dev/ttyACM0 on a Node Medic is the medic's OWN radio
+# (a Heltec Wireless Tracker); this target once pointed straight at it. Pass the
+# port explicitly, and prefer a /dev/serial/by-id/ path, which is stable across
+# reboots where ttyACM* ordering is not:
+#   make upload-techo PORT=/dev/serial/by-id/usb-Nordic_NRF52_DK_<serial>-if00
+PORT ?= UNSET
 upload-techo:
-	arduino-cli upload -p /dev/ttyACM0 --fqbn adafruit:nrf52:pca10056
+	@test "$(PORT)" != "UNSET" || { echo "Refusing: pass PORT=/dev/serial/by-id/... explicitly"; exit 1; }
+	arduino-cli upload -p $(PORT) --fqbn adafruit:nrf52:pca10056
 	@sleep 6
-	rnodeconf /dev/ttyACM0 --firmware-hash $$(./partition_hashes from_device /dev/ttyACM0)
+	rnodeconf $(PORT) --firmware-hash $$(./partition_hashes from_device $(PORT))
 
 upload-xiao_s3:
 	arduino-cli upload -p /dev/ttyACM0 --fqbn esp32:esp32:XIAO_ESP32S3

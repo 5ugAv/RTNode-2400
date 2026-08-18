@@ -955,7 +955,10 @@
       #define EEPROM_SIZE 296
       #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
 
-      #define CONFIG_UART_BUFFER_SIZE 32768
+      // 32768 was an outlier: every other nRF52 board here uses <=6144, and on a
+      // 256KB part that one buffer was 32769B of ~70KB static RAM. Reduced
+      // 2026-08-18 after a .map audit; frees ~26KB.
+      #define CONFIG_UART_BUFFER_SIZE 6144
       #define CONFIG_QUEUE_SIZE 6144
       #define CONFIG_QUEUE_MAX_LENGTH 200
 

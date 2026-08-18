@@ -219,6 +219,122 @@
   Adafruit_SSD1306 display(DISP_W, DISP_H, &Wire, DISP_RST);
 #endif
 
+// Moved up from its original spot further down in this file (it used to be
+// declared alongside display_blanked etc.) so the T-Echo glyph block below
+// — which reads it — doesn't forward-reference it. Same initial value,
+// same single declaration, just earlier in this translation unit.
+bool display_tx = false;
+
+// ── T-Echo status glyph (EpdGlyph.h) ────────────────────────────────────
+// See EpdGlyph.h for the full design writeup (why event-driven, not
+// clock-driven; why this doesn't sample a NeoPixel colour like the Heltec
+// Tracker reference; the priority table and burst-vs-static split). This
+// block only wires the portable module to this board's real signals and
+// to the GxEPD2 panel object declared just above.
+#if BOARD_MODEL == BOARD_TECHO
+  #include "EpdGlyph.h"
+
+  EpdGlyphMachine epd_glyph;
+
+  // Bottom-right 64x64 corner of the panel's real 200x200 buffer — chosen
+  // deliberately OUTSIDE the legacy 128x64 status/waterfall UI area (which
+  // occupies (0,0)-(127,63) of that same buffer), so the glyph never
+  // overlaps existing content. 200-64=136, and 136 is a multiple of 8 as
+  // GxEPD2_154_D67's windowed refresh requires ("x and w should be
+  // multiple of 8" — GxEPD2_154_D67.h).
+  #define EPD_GLYPH_PANEL_X 136
+  #define EPD_GLYPH_PANEL_Y 136
+
+  // Converts a one-shot pulse latch (display_tx — set true elsewhere in
+  // this firmware at the real transmit call sites, RNode_Firmware.ino
+  // ~1453/1491) into a short sustained level for EpdGlyphMachine::set_tx().
+  // Deliberately does NOT clear display_tx itself: Display.h's own
+  // update_stat_area() waterfall code already consumes-and-clears that
+  // same latch on its own ~epd_update_interval cadence, and this service
+  // function runs every loop() iteration (much more often) — clearing it
+  // here would race that other, slower consumer and could make it miss
+  // real TX pulses for the waterfall display. Peeking without clearing
+  // means a single brief TX pulse produces a short visible burst; a rapid
+  // run of transmissions keeps re-extending the window into a fuller
+  // animation. This is a deliberate, documented choice, not an oversight.
+  uint32_t epd_glyph_tx_level_until = 0;
+  #define EPD_GLYPH_TX_LEVEL_HOLD_MS 250u
+
+  // Blits the state machine's current 64x64 1-bit bitmap into the GxEPD2
+  // buffer at the fixed corner. Plain per-pixel drawPixel loop (4096 calls)
+  // rather than a packed drawImage — this only runs on an actual state
+  // change (see EpdGlyph.h's event-driven design), so it is not a hot
+  // path, and per-pixel calls avoid any risk of a hand-rolled 1bpp packing
+  // bug silently corrupting the image.
+  void epd_glyph_paint_into_display() {
+    const EpdGlyphBitmap &bmp = epd_glyph.bitmap();
+    for (int y = 0; y < EPD_GLYPH_H; y++) {
+      for (int x = 0; x < EPD_GLYPH_W; x++) {
+        display.drawPixel(EPD_GLYPH_PANEL_X + x, EPD_GLYPH_PANEL_Y + y,
+                           bmp.get(x, y) ? SSD1306_BLACK : SSD1306_WHITE);
+      }
+    }
+  }
+
+  // Called every loop() iteration (see RNode_Firmware.ino, next to the
+  // existing `if (disp_ready && !display_updating) update_display();`
+  // call). Cheap: EpdGlyphMachine::tick() internally no-ops on almost
+  // every call (event-driven, not clock-driven — see EpdGlyph.h). Only
+  // when tick() reports a genuine repaint do we touch the panel via
+  // displayWindow(), which is GxEPD2's own "write + partial-waveform
+  // refresh of just this region" call — confirmed from
+  // GxEPD2_BW.h::displayWindow() to operate independently of
+  // setFullWindow()/setPartialWindow() state, so it cannot desync the
+  // legacy whole-panel refresh path in update_display().
+  //
+  // UNPROVEN ON HARDWARE: displayWindow() still blocks on the panel's BUSY
+  // pin for ~500ms (GxEPD2_154_D67.h partial_refresh_time) per call. Even
+  // though real state transitions are now rare, a genuine transition (e.g.
+  // TX starting) still stalls the main loop for that ~500ms while it
+  // happens — and Config.h's STATUS_INTERVAL_MS=3 means radio/DCD status
+  // sampling is paused for that whole window. This was flagged during
+  // design review and could not be tested without hardware; if it proves
+  // disruptive to radio timing, the mitigation is not "make it faster" —
+  // it is "make it rarer still" (e.g. drop the bounded burst frames and
+  // show only a single static badge per event, like the other states).
+  void epd_glyph_service(uint32_t now) {
+    epd_glyph.set_not_ready(!hw_ready);
+    epd_glyph.set_console(console_active);
+    epd_glyph.set_fault(radio_error);
+    epd_glyph.set_interference(interference_detected || airtime_lock, now);
+    epd_glyph.set_rx(dcd_led);
+
+    if (display_tx) epd_glyph_tx_level_until = now + EPD_GLYPH_TX_LEVEL_HOLD_MS;
+    epd_glyph.set_tx((int32_t)(now - epd_glyph_tx_level_until) < 0);
+
+    if (epd_glyph.tick(now)) {
+      epd_glyph_paint_into_display();
+      display.displayWindow(EPD_GLYPH_PANEL_X, EPD_GLYPH_PANEL_Y, EPD_GLYPH_W, EPD_GLYPH_H);
+    }
+  }
+
+  // Draws the FAULT glyph once, as a genuine full-panel refresh, and pushes
+  // it immediately. Intended for led_indicate_boot_error() (Utilities.h) —
+  // an unrecoverable `while(true)` hang where the main loop() never runs
+  // again afterwards, so this is the ONLY chance the panel ever gets to
+  // show anything. Deliberately bypasses the event-driven tick()/corner-
+  // only path: there is no "later" for a background full-panel refresh to
+  // happen, and blocking for the ~2.6s full_refresh_time is irrelevant
+  // when the alternative is the panel staying on whatever it last showed,
+  // forever, with no diagnostic at all.
+  void epd_glyph_show_fault_forever() {
+    EpdGlyphBitmap fault_bmp;
+    epd_glyph_render(fault_bmp, EPD_GLYPH_FAULT, 0, 0);
+    display.setFullWindow();
+    display.fillScreen(SSD1306_WHITE);
+    for (int y = 0; y < EPD_GLYPH_H; y++)
+      for (int x = 0; x < EPD_GLYPH_W; x++)
+        if (fault_bmp.get(x, y))
+          display.drawPixel(EPD_GLYPH_PANEL_X + x, EPD_GLYPH_PANEL_Y + y, SSD1306_BLACK);
+    display.display(false);
+  }
+#endif
+
 float disp_target_fps = 7;
 float epd_update_fps  = 0.5;
 
@@ -235,10 +351,26 @@ uint32_t last_unblank_event = 0;
 uint32_t display_blanking_timeout = DISPLAY_BLANKING_TIMEOUT;
 uint8_t display_unblank_intensity = display_intensity;
 bool display_blanked = false;
-bool display_tx = false;
 bool recondition_display = false;
 int disp_update_interval = 1000/disp_target_fps;
-int epd_update_interval = 1000/disp_target_fps;
+// PRE-EXISTING BUG, found and fixed while wiring the status glyph: this was
+// unconditionally `1000/disp_target_fps` (~142ms) on every board, which
+// made `epd_update_fps` (declared above, =0.5, clearly meant to give the
+// e-paper its own much slower cadence) dead — never read anywhere. Because
+// GxEPD2's display() call blocks the main loop for the panel's own
+// partial_refresh_time (~500ms, GxEPD2_154_D67.h) or full_refresh_time
+// (~2600ms) every time it runs, a ~142ms trigger interval meant the legacy
+// TECHO whole-panel refresh would have re-armed and fired again the instant
+// each blocking call returned — i.e. an unthrottled, effectively
+// continuous refresh loop, forever, independent of anything in this
+// change. This was never caught because the T-Echo port has never run on
+// hardware (see the firmware-techo Makefile target's own comment). Scoped
+// to BOARD_TECHO only so no other board's behaviour changes.
+#if BOARD_MODEL == BOARD_TECHO
+  int epd_update_interval = (int)(1000.0f/epd_update_fps);
+#else
+  int epd_update_interval = 1000/disp_target_fps;
+#endif
 uint32_t last_page_flip = 0;
 int page_interval = 4000;
 bool device_signatures_ok();
@@ -1708,11 +1840,41 @@ void update_display(bool blank = false) {
 
         update_stat_area();
         update_disp_area();
+
+        // The setFullWindow()+fillScreen(WHITE) above wipes the ENTIRE
+        // 200x200 buffer, including the glyph corner that
+        // epd_glyph_service() (called every loop() iteration, see
+        // RNode_Firmware.ino) paints independently and pushes via its own
+        // displayWindow() call. Without this, the corner would go blank
+        // every time this legacy whole-panel cycle runs (currently every
+        // ~epd_update_interval, see the dead-epd_update_fps fix note
+        // below) until the next real glyph state change repainted it.
+        // Repainting the LAST KNOWN glyph frame here (not re-ticking the
+        // state machine) keeps this purely a "don't lose what's already
+        // there" fix, not a second source of redraw cadence.
+        #if BOARD_MODEL == BOARD_TECHO
+          epd_glyph_paint_into_display();
+        #endif
       }
-      
+
       #if BOARD_MODEL == BOARD_TECHO
         if (current-last_epd_refresh >= epd_update_interval) {
-          if (current-last_epd_full_refresh >= REFRESH_PERIOD) { display.display(false); last_epd_full_refresh = millis(); }
+          if (current-last_epd_full_refresh >= REFRESH_PERIOD) {
+            display.display(false);
+            last_epd_full_refresh = millis();
+            // This full-panel refresh already covers the glyph corner
+            // with a true full-waveform pass — GxEPD2_154_D67's public API
+            // has no way to request a full-waveform refresh of only a
+            // sub-window (its windowed refresh(x,y,w,h) overload takes no
+            // partial/full choice — confirmed in GxEPD2_154_D67.h), so
+            // there is no separate "windowed ghosting-clear" this driver
+            // can actually perform. Piggybacking on the existing full-panel
+            // cycle is the honest equivalent, and it already runs more
+            // often (REFRESH_PERIOD=300000ms=5min) than EpdGlyph.h's own
+            // 10-minute default, so this satisfies the brief's ghosting-
+            // clear requirement more conservatively than specced.
+            epd_glyph.mark_full_refresh(millis());
+          }
           else { display.display(true); }
           last_epd_refresh = millis();
           epd_blanked = false;
