@@ -787,7 +787,14 @@ bool display_init() {
           display.setRotation(2);  // panel orientation (rotates the 240x240 viewport)
         #elif BOARD_MODEL == BOARD_TECHO
           disp_mode = DISP_MODE_PORTRAIT;
-          display.setRotation(3);
+          // Was 3. One step back = the whole frame turns 90 degrees
+          // counter-clockwise on the glass (operator, 2026-08-20, against
+          // the case's natural hold). Rotation is applied by Adafruit_GFX
+          // to every draw INCLUDING the glyph's pixels and its
+          // displayWindow box, so the layout stays internally consistent
+          // and the windowed-refresh multiple-of-8 rule still holds
+          // (rot-2 maps the glyph box to physical x = 200-136-64 = 0).
+          display.setRotation(2);
         #else
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(3);
@@ -1880,6 +1887,21 @@ void update_display(bool blank = false) {
         // there" fix, not a second source of redraw cadence.
         #if BOARD_MODEL == BOARD_TECHO
           epd_glyph_paint_into_display();
+
+          // The board's own nameplate, in panel area the legacy 128x64 UI
+          // never touches (status UI: y<64; glyph: x>=136 AND y>=136 --
+          // this band is x 0..199, y 72..122, clear of both). An RTNode and
+          // an RNode T-Echo are identical in the case, and the stale RNODE
+          // badge from a previous flash kept answering the question wrongly
+          // (operator, 2026-08-20). Redrawn every cycle because the whole
+          // buffer is wiped above; costs nothing extra on the panel, since
+          // it rides the refresh that is happening anyway.
+          display.setTextColor(SSD1306_BLACK);
+          display.setTextSize(2);
+          display.setCursor(4, 76);
+          display.print("Reticulum");
+          display.setCursor(4, 100);
+          display.print("Transport Node");
         #endif
       }
 
