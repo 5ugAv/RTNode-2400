@@ -1045,6 +1045,18 @@ void setup() {
 */
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
+      // THE IDENTITY, SAID OUT LOUD AT BOOT. Node Medic reads this line over
+      // USB at birth so the certificate carries the identity every announce
+      // from this node will verifiably carry -- without it, a newborn appears
+      // on VITALS as a stranger until someone adopts it by hand. FIREWALL_MODE
+      // targets announce it via the HealthBeacon init line; this build has
+      // neither WiFi nor that feature set, so this print is the only place
+      // the identity crosses the USB boundary (2026-08-19).
+      Serial.printf("[RTNode] identity=%s dst=%s\r\n",
+                    RNS::Transport::identity().hash().toHex().c_str(),
+                    destination.hash().toHex().c_str());
+      Serial.flush();
+
 #ifdef FIREWALL_MODE
       // Cache this node's destination hash in RTC memory so the captive-portal
       // config page can show it without needing RNS to be running.
