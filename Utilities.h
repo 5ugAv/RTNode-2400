@@ -1838,8 +1838,9 @@ void kiss_dump_config() {
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
 void eeprom_flush() {
-    file.close();
-    file.open(EEPROM_FILE, FILE_O_WRITE);
+    // was close+reopen; File::flush() IS lfs_file_sync, and the reopen cycle
+    // is implicated in the tail-byte loss above.
+    file.flush();
     written_bytes = 0;
 }
 #endif
@@ -1855,6 +1856,18 @@ void eeprom_update(int mapped_addr, uint8_t byte) {
     #elif !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
         // todo: clean up this implementation, writing one byte and syncing
         // each time is really slow, but this is also suboptimal
+        // COMMIT EVERY WRITE, and never close/reopen mid-stream. The old
+        // batching (close+reopen every 4th byte, plus special flushes on the
+        // LOCK/CONF bytes) measurably LOST data on the T-Echo (2026-08-19):
+        // in controlled KISS tests, 4 writes + reset kept 1 byte; 8 writes
+        // kept 5 -- tail bytes vanished across reboot even though a close
+        // (which is lfs sync) had run after them. Every rnodeconf -r
+        // bootstrap therefore came back "EEPROM is invalid" after its final
+        // reboot, while validating fine pre-reset out of the cache.
+        // File::flush() maps to lfs_file_sync -- a real commit -- so syncing
+        // after each write makes every byte durable the moment it lands.
+        // EEPROM writes happen at provisioning and config-save only, so the
+        // cost (one sync per byte) is paid where slowness is acceptable.
         uint8_t read_byte;
         void* read_byte_ptr = &read_byte;
         file.seek(mapped_addr);
@@ -1862,19 +1875,11 @@ void eeprom_update(int mapped_addr, uint8_t byte) {
         file.seek(mapped_addr);
         if (read_byte != byte) {
             file.write(byte);
+            file.flush();
         }
         written_bytes++;
 
-        if ((mapped_addr - eeprom_addr(0)) == ADDR_INFO_LOCK) {
-			// have to do a flush because we're only writing 1 byte and it syncs after 4
-			eeprom_flush();
-        }
-        else if ((mapped_addr - eeprom_addr(0)) == ADDR_CONF_OK) {
-			// have to do a flush because we're only writing 1 byte and it syncs after 4
-			eeprom_flush();
-        }
-
-        if (written_bytes >= 4) {
+        if (false) {
             file.close();
             file.open(EEPROM_FILE, FILE_O_WRITE);
             written_bytes = 0;
@@ -1892,14 +1897,24 @@ void eeprom_write(uint8_t addr, uint8_t byte) {
 
 void eeprom_erase() {
 	#if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+		// Close the eeprom handle BEFORE the format — it stays open from
+		// eeprom_begin(), and formatting under an open lfs handle is how the
+		// filesystem gets corrupted. And do NOT clear_caches() here: format()
+		// just erased the ENTIRE filesystem, RNS caches included, so the call
+		// was pure risk — RNS file ops through its own now-stale handles on a
+		// freshly formatted fs. This is the step where provisioning died on
+		// the T-Echo (2026-08-19): plain eeprom writes provably persist across
+		// reset, but every rnodeconf -r bootstrap — which starts with this
+		// wipe — came back invalid after its final reboot.
+		file.close();
 		InternalFS.format();
 	#else
 		for (int addr = 0; addr < EEPROM_RESERVED; addr++) {
 			eeprom_update(eeprom_addr(addr), 0xFF);
 		}
-	#endif
-	#ifdef HAS_RNS
-		reticulum.clear_caches();
+		#ifdef HAS_RNS
+			reticulum.clear_caches();
+		#endif
 	#endif
 	hard_reset();
 }
