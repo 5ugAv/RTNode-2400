@@ -215,15 +215,23 @@ sketch-link:
 	@mkdir -p $(dir $(SKETCH_LINK))
 	@ln -sfn $(CURDIR) $(SKETCH_LINK)
 
+# THE BOARD MUST NAME ITSELF. Built plain, the pca10056 fqbn ships Nordic's
+# USB strings ("nRF52840 DK"), and Node Medic identifies nRF52 boards by their
+# USB product string -- so a running T-Echo RTNode was unidentifiable and the
+# BIRTH gates stayed shut (2026-08-19). Overriding the board properties gives
+# it back its true name; "T-Echo" in the product string is the needle the
+# medic's detector matches, and the by-id symlink stays matchable by *T-Echo*.
+USB_ID := --build-property 'build.usb_manufacturer="LilyGO"' --build-property 'build.usb_product="T-Echo RTNode-2400"'
+
 firmware-techo-bringup: sketch-link
-	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056:debug=l1 --output-dir $(CURDIR)/build/techo-bringup \
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056:debug=l1 $(USB_ID) --output-dir $(CURDIR)/build/techo-bringup \
 	  --library lib/microReticulum \
 	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -DRNS_USE_TLSF=1 -DRNS_USE_ALLOCATOR=1 -DRNS_TLSF_FIXED_SIZE=32768 -fexceptions" \
 	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
 	  .
 
 firmware-techo: sketch-link
-	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 --output-dir $(CURDIR)/build/techo-release \
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 $(USB_ID) --output-dir $(CURDIR)/build/techo-release \
 	  --library lib/microReticulum \
 	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -DRNS_USE_TLSF=1 -DRNS_USE_ALLOCATOR=1 -DRNS_TLSF_FIXED_SIZE=32768 -fexceptions" \
 	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
@@ -384,7 +392,7 @@ VARIANT ?= release
 # use is inside that override). If THIS boots, the fault is in that path and not
 # in RNS itself. Keep HAS_RNS so the comparison is otherwise like-for-like.
 firmware-techo-noalloc: sketch-link
-	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 --output-dir $(CURDIR)/build/techo-noalloc \
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 $(USB_ID) --output-dir $(CURDIR)/build/techo-noalloc \
 	  --library lib/microReticulum \
 	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x44 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -fexceptions" \
 	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
@@ -655,7 +663,7 @@ release-heltec_t114:
 	adafruit-nrfutil dfu genpkg --dev-type 0x0052 --application build/rnode_firmware_heltec_t114.hex Release/rnode_firmware_heltec_t114.zip
 
 release-techo:
-	arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 -e --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x44\""
+	arduino-cli compile --log --fqbn adafruit:nrf52:pca10056 $(USB_ID) -e --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x44\""
 	cp build/adafruit.nrf52.pca10056/RNode_Firmware.ino.hex build/rnode_firmware_techo.hex
 	adafruit-nrfutil dfu genpkg --dev-type 0x0052 --application build/rnode_firmware_techo.hex Release/rnode_firmware_techo.zip
 
