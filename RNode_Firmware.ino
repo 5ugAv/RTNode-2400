@@ -88,8 +88,14 @@ static bool last_lora_phy_header_valid = false;
   #include "Console.h"
 #endif
 
-#ifdef FIREWALL_MODE
-  #include "HealthStatus.h"   // JSON /status endpoint + shared health snapshot
+#if defined(FIREWALL_MODE) || defined(HAS_RNS)
+  // The beacon is the medic ecology's heartbeat (VITALS, kin folding, the
+  // outage watch) and was firewall-only — which left the nRF52 RTNode a
+  // SILENT transport: routing, answering path requests, and never once
+  // telling the mesh it exists. Thirty minutes of a healthy T-Echo and a
+  // listening medic produced nothing, correctly (2026-08-20). Any build
+  // that runs RNS now beacons.
+  #include "HealthStatus.h"   // shared health snapshot (portable since 2026-08-20)
   #include "HealthBeacon.h"   // periodic health beacon over the LoRa mesh
 #endif
 
@@ -1056,6 +1062,13 @@ void setup() {
                     RNS::Transport::identity().hash().toHex().c_str(),
                     destination.hash().toHex().c_str());
       Serial.flush();
+
+#ifndef FIREWALL_MODE
+      // Firewall builds start the beacon a few lines down; this is the same
+      // call for the builds that skip that block. Same persistent transport
+      // identity, so the announce source hash is stable across reboots.
+      health_beacon_init();
+#endif
 
 #ifdef FIREWALL_MODE
       // Cache this node's destination hash in RTC memory so the captive-portal
@@ -2230,9 +2243,25 @@ void serial_callback(uint8_t sbyte) {
   portMUX_TYPE update_lock = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
+extern bool noise_floor_sampled;   // defined just below medium_free
+void update_noise_floor();
+
 bool medium_free() {
   update_modem_status();
-  if (avoid_interference && interference_detected) { return false; }
+  // FEED THE NOISE-FLOOR SAMPLER FROM HERE TOO. check_modem_status() only
+  // samples when last_status_update has gone stale -- and update_modem_status
+  // (called on the line above, on EVERY tx attempt) refreshes it. A transport
+  // that boots with announces queued therefore retries constantly, starves
+  // the sampler, and the floor never leaves its -292 init -- against which
+  // every ordinary reading looks like interference, so TX stays blocked,
+  // so it retries, forever. A healthy T-Echo RTNode sat in exactly this
+  // self-sustaining silence (2026-08-20: "TX BLOCKED ... noise=-292"
+  // streaming for minutes, while both radios and both antennas were fine).
+  update_noise_floor();
+  // ...and never declare interference against a floor that was NEVER
+  // MEASURED. Until the sampler has a real average, "rssi above floor" is a
+  // comparison against a sentinel, not a measurement.
+  if (avoid_interference && interference_detected && noise_floor_sampled) { return false; }
   return !dcd;
 }
 
@@ -2626,6 +2655,11 @@ void loop() {
   // No-op until Reticulum is up and the user has enabled "Advertise Device".
   if (reticulum) {
     advertise_loop();
+    health_beacon_loop();
+  }
+#elif defined(HAS_RNS)
+  // Non-firewall RNS builds beacon too — see the include note above.
+  if (reticulum) {
     health_beacon_loop();
   }
 #endif

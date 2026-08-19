@@ -63,6 +63,9 @@ static uint32_t         health_fault_next_check = 0;
 
 // esp_reset_reason() -> wire enum (HB_RESET_*, matches the tool's map).
 inline uint8_t health_reset_reason_code() {
+#if !defined(ESP32)
+    return HB_RESET_OTHER;   // nRF52: reset-reason not wired yet — honest
+#else
     switch (esp_reset_reason()) {
         case ESP_RST_POWERON:  return HB_RESET_POWERON;
         case ESP_RST_PANIC:    return HB_RESET_PANIC;
@@ -71,6 +74,7 @@ inline uint8_t health_reset_reason_code() {
         case ESP_RST_SW:       return HB_RESET_SW;
         default:               return HB_RESET_OTHER;
     }
+#endif
 }
 
 // Gather live health into the 20-byte v2 wire payload (v1 prefix + power/link
@@ -187,7 +191,11 @@ inline void health_fault_check() {
     if ((int32_t)(millis() - health_fault_next_check) < 0) return;
     health_fault_next_check = millis() + HEALTH_FAULT_CHECK_INTERVAL_MS;
 
+#if defined(ESP32)
     uint32_t heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+#else
+    uint32_t heap = dbgHeapFree();   // Adafruit nRF52 core's free-heap read
+#endif
     bool pressure = (heap < (uint32_t)HEALTH_FAULT_HEAP_KB * 1024UL);
     if (pressure) {
         if (health_fault_strikes < 0xFF) health_fault_strikes++;
