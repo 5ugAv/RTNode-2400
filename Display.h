@@ -200,10 +200,14 @@
   #define SSD1306_WHITE ST77XX_WHITE
   #define SSD1306_BLACK ST77XX_BLACK
 #elif BOARD_MODEL == BOARD_HELTEC_T114
-  #ifndef SPI1
-    SPIClass SPI1(NRF_SPIM3, DISPLAY_MISO, DISPLAY_CLK, DISPLAY_MOSI);
-  #endif
-  ST7789Spi display(&SPI1, DISPLAY_RST, DISPLAY_DC, DISPLAY_CS);
+  // Heltec's own nRF52 core DEFINES an SPI1 object (their variant has two
+  // SPI buses), and `#ifndef SPI1` cannot see it — SPI1 is a variable, not
+  // a macro — so this collided at link on the Heltec core (multiple
+  // definition of SPI1, first T114 build, 2026-08-20). A renamed object
+  // keeps our exact SPIM3 + display-pin setup on every core; the core's
+  // unused SPI1 is constructed but never begun, so the hardware is ours.
+  SPIClass t114_display_spi(NRF_SPIM3, DISPLAY_MISO, DISPLAY_CLK, DISPLAY_MOSI);
+  ST7789Spi display(&t114_display_spi, DISPLAY_RST, DISPLAY_DC, DISPLAY_CS);
   #define SSD1306_WHITE ST77XX_WHITE
   #define SSD1306_BLACK ST77XX_BLACK
 #elif BOARD_MODEL == BOARD_TBEAM_S_V1
@@ -787,14 +791,14 @@ bool display_init() {
           display.setRotation(2);  // panel orientation (rotates the 240x240 viewport)
         #elif BOARD_MODEL == BOARD_TECHO
           disp_mode = DISP_MODE_PORTRAIT;
-          // Was 3. One step back = the whole frame turns 90 degrees
-          // counter-clockwise on the glass (operator, 2026-08-20, against
-          // the case's natural hold). Rotation is applied by Adafruit_GFX
-          // to every draw INCLUDING the glyph's pixels and its
-          // displayWindow box, so the layout stays internally consistent
-          // and the windowed-refresh multiple-of-8 rule still holds
-          // (rot-2 maps the glyph box to physical x = 200-136-64 = 0).
-          display.setRotation(2);
+          // Rotation history: 3 (stock) -> 2 (CCW step, 2026-08-20) -> 3
+          // again (operator, same night: the CCW step overshot for how the
+          // repaired housing sits — "now needs to go clockwise"). Rotation
+          // is applied by Adafruit_GFX to every draw INCLUDING the glyph's
+          // pixels and its displayWindow box; at rot 3 the glyph box maps
+          // to physical x 136..199 (divisible by 8, the windowed-refresh
+          // rule holds).
+          display.setRotation(3);
         #else
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(3);
@@ -1871,8 +1875,10 @@ void update_display(bool blank = false) {
           display.fillScreen(SSD1306_WHITE);
         #endif
 
+        #if BOARD_MODEL != BOARD_TECHO
         update_stat_area();
         update_disp_area();
+        #endif
 
         // The setFullWindow()+fillScreen(WHITE) above wipes the ENTIRE
         // 200x200 buffer, including the glyph corner that
@@ -1888,20 +1894,93 @@ void update_display(bool blank = false) {
         #if BOARD_MODEL == BOARD_TECHO
           epd_glyph_paint_into_display();
 
-          // The board's own nameplate, in panel area the legacy 128x64 UI
-          // never touches (status UI: y<64; glyph: x>=136 AND y>=136 --
-          // this band is x 0..199, y 72..122, clear of both). An RTNode and
-          // an RNode T-Echo are identical in the case, and the stale RNODE
-          // badge from a previous flash kept answering the question wrongly
-          // (operator, 2026-08-20). Redrawn every cycle because the whole
-          // buffer is wiped above; costs nothing extra on the panel, since
-          // it rides the refresh that is happening anyway.
-          display.setTextColor(SSD1306_BLACK);
+          // == The operator-approved transport panel (sketch + mock v3,
+          // 2026-08-20). Layout on the 200x200 frame, rot 3:
+          //   header: RETICULUM / TRANSPORT as inverted badge bars
+          //   five FLEET-UNIFORM connection rows (operator rule: every
+          //     RTNode screen shows the same rows; a capability this board
+          //     lacks keeps its row with a LINE THROUGH the circle)
+          //   bt_devname bottom-left (the same identity the stock RNODE
+          //     badge taught the operator to recognise)
+          //   the LIVE radio frequency up the right edge (never a
+          //     hardcoded string), ABOVE the glyph corner (x>=136,y>=136
+          //     stays the activity glyph's ground)
+          // Redrawn every cycle because the whole buffer is wiped above.
+          display.setTextWrap(false);
+
+          // header: ONE solid block, THREE words (approved mock v7 —
+          // "one big solid black square", "be sure not to leave out
+          // node"), stencil-notched corners, dotted rails above/below.
           display.setTextSize(2);
-          display.setCursor(4, 76);
-          display.print("Reticulum");
-          display.setCursor(4, 100);
-          display.print("Transport Node");
+          for (int x = 8; x < 146; x += 4) {
+            display.drawPixel(x, 3, SSD1306_BLACK);
+            display.drawPixel(x, 5, SSD1306_BLACK);
+          }
+          display.fillRect(8, 9, 138, 72, SSD1306_BLACK);
+          display.fillRect(8, 9, 4, 4, SSD1306_WHITE);
+          display.fillRect(142, 9, 4, 4, SSD1306_WHITE);
+          display.fillRect(8, 77, 4, 4, SSD1306_WHITE);
+          display.fillRect(142, 77, 4, 4, SSD1306_WHITE);
+          display.setTextColor(SSD1306_WHITE);
+          // size-2 chars are 12px wide; centre each word in the block
+          display.setCursor(8 + (138 - 9 * 12) / 2, 13);
+          display.print("RETICULUM");
+          display.setCursor(8 + (138 - 9 * 12) / 2, 37);
+          display.print("TRANSPORT");
+          display.setCursor(8 + (138 - 4 * 12) / 2, 61);
+          display.print("NODE");
+          for (int x = 8; x < 146; x += 4) {
+            display.drawPixel(x, 87, SSD1306_BLACK);
+            display.drawPixel(x, 89, SSD1306_BLACK);
+          }
+
+          // connection rows: filled = up, ring = off/down, ring+line = the
+          // board has no such radio (T-Echo: nRF52840 — no WiFi, so no
+          // WAN/LAN either; they ride WiFi)
+          display.setTextColor(SSD1306_BLACK);
+          {
+            struct { const char *label; int state; } rows[] = {
+              // 2 = up, 1 = present-but-down, 0 = absent on this board.
+              // WAN removed fleet-wide (operator, mock v6).
+              { "LORA", radio_online ? 2 : 1 },
+              { "WIFI", 0 },
+              { "LAN",  0 },
+              { "BLE",  (bt_state != BT_STATE_OFF) ? 2 : 1 },
+            };
+            int y = 96;
+            for (int r = 0; r < 4; r++) {
+              int cx = 16, cy = y + 8;
+              if (rows[r].state == 2) {
+                display.fillCircle(cx, cy, 6, SSD1306_BLACK);
+              } else {
+                display.drawCircle(cx, cy, 6, SSD1306_BLACK);
+                display.drawCircle(cx, cy, 5, SSD1306_BLACK);
+                if (rows[r].state == 0) {
+                  display.drawLine(cx - 8, cy + 8, cx + 8, cy - 8, SSD1306_BLACK);
+                  display.drawLine(cx - 8, cy + 9, cx + 9, cy - 8, SSD1306_BLACK);
+                }
+              }
+              display.setCursor(30, y);
+              display.print(rows[r].label);
+              y += 21;
+            }
+          }
+
+          // identity, bottom-left, clear of the glyph corner (x < 136)
+          display.setTextSize(1);
+          display.setCursor(6, 188);
+          display.print(bt_devname);
+
+          // the LIVE frequency up the right edge: draw in rot 2 so the
+          // glyphs read bottom-to-top in the rot-3 frame. Mapping checked:
+          // rot-2 cursor (67,162), size 3 -> rot-3 frame column x 162..186,
+          // running y 132 down to 6 — clear of the glyph box (y>=136).
+          display.setRotation(2);
+          display.setTextSize(3);
+          display.setCursor(67, 162);
+          display.printf("%.3f", (float)lora_freq / 1000000.0);
+          display.setRotation(3);
+          display.setTextSize(2);
         #endif
       }
 

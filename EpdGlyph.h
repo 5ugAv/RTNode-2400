@@ -328,8 +328,37 @@ inline void epd_glyph_render(EpdGlyphBitmap &b, EpdGlyphState state, uint8_t fra
     case EPD_GLYPH_STANDBY: {
         // Static — drawn once on entry, never redrawn while idle (see
         // revision note: a perpetual breathing loop is a panel-wear
-        // hazard). The dot is the only content.
-        fill_circle(b, EPD_GLYPH_CX, EPD_GLYPH_CY, EPD_GLYPH_DOT_R);
+        // hazard). The RETICULUM NETWORK MARK (operator, 2026-08-20 late:
+        // "instead of the wifi style signal to show its connected use the
+        // reticulum logo") — the RNS circle-and-graph, drawn with the
+        // existing primitives: ring outline, hub, satellite nodes, edges.
+        // Approved as mock v7. Still exactly one draw per entry.
+        int cx = EPD_GLYPH_CX, cy = EPD_GLYPH_CY;
+        // ring, ~2px stroke
+        arc(b, cx, cy, 28, 0.0f, 360.0f);
+        arc(b, cx, cy, 27, 0.0f, 360.0f);
+        // node positions (from the approved mock, canvas-centred)
+        int hub_x = cx - 8, hub_y = cy - 6;
+        int ax = cx - 2,  ay = cy - 22;
+        int bx = cx - 18, by = cy - 16;
+        int cx2 = cx + 22, cy2 = cy - 4;
+        int dx = cx - 22, dy = cy + 18;
+        int ex = cx + 2,  ey = cy + 16;
+        int fx = cx + 14, fy = cy + 10;
+        line(b, hub_x, hub_y, ax, ay);
+        line(b, ax, ay, bx, by);
+        line(b, hub_x, hub_y, cx2, cy2);
+        line(b, hub_x, hub_y, dx, dy);
+        line(b, dx, dy, ex, ey);
+        line(b, ex, ey, fx, fy);
+        line(b, fx, fy, cx2, cy2);
+        fill_circle(b, hub_x, hub_y, 5);
+        fill_circle(b, ax, ay, 3);
+        fill_circle(b, bx, by, 2);
+        fill_circle(b, cx2, cy2, 4);
+        fill_circle(b, dx, dy, 4);
+        fill_circle(b, ex, ey, 3);
+        fill_circle(b, fx, fy, 2);
         break;
     }
 

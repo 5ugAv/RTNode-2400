@@ -420,6 +420,46 @@ flash-rak4631:
 	echo "target : $$port"; echo "image  : $$(stat -c%s $$z) bytes"; \
 	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
 
+# Heltec Mesh Node T114 (nRF52840 + SX1262), BOARD_MODEL 0x3C — the third
+# nRF RTNode. Built on Heltec's OWN core (Heltec_nRF52, HT-n5262 board): the
+# T114 pin table in Boards.h was authored against that core's variant, and
+# building it on pca10056 would silently re-map pins (the reason the RAK
+# builds on the RAK BSP). noalloc for the same reason as the T-Echo/RAK:
+# RNS_USE_ALLOCATOR crashes nRF52 before main().
+USB_ID_T114 := --build-property 'build.usb_manufacturer="Heltec"' --build-property 'build.usb_product="T114 RTNode-2400"'
+
+firmware-t114-noalloc: sketch-link
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn Heltec_nRF52:Heltec_nRF52:HT-n5262 $(USB_ID_T114) --output-dir $(CURDIR)/build/t114-noalloc \
+	  --library lib/microReticulum \
+	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x3C -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -fexceptions" \
+	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
+	  .
+
+# Serial-DFU flash for the T114, same guards as flash-rak4631. Identities
+# OBSERVED live 2026-08-20 (never guessed): stock app "Heltec_HT-n5262"
+# PID 8071, bootloader "Heltec_AutoMation_HT-n5262" PID 0071, our app
+# "Heltec_T114_RTNode-2400" (USB_ID_T114). Product string is the same
+# "HT-n5262" in app and boot — the PID is the truth, as ever.
+flash-t114:
+	@z="$(CURDIR)/build/t114-noalloc/RNode_Firmware.ino.zip"; \
+	test -f "$$z" || { echo "No image: $$z (make firmware-t114-noalloc)"; exit 1; }; \
+	links=$$(ls /dev/serial/by-id/*HT-n5262* /dev/serial/by-id/*T114_RTNode-2400* 2>/dev/null | sort -u); \
+	n=$$(echo "$$links" | grep -c . || true); \
+	test "$$n" = "1" || { echo "REFUSING: need exactly ONE T114 on the bus (saw $$n)"; exit 1; }; \
+	port=$$(readlink -f $$links); \
+	pid=$$(udevadm info -q property -n $$port 2>/dev/null | grep '^ID_MODEL_ID=' | cut -d= -f2); \
+	case "$$pid" in 0029|002a|0071) ;; *) \
+	  echo "REFUSING: $$port is a RUNNING APP (PID $$pid), not the bootloader."; \
+	  echo "Double-tap RESET (or let the birth touch it)."; \
+	  exit 1;; esac; \
+	for e in /dev/serial/by-id/*Espressif*; do \
+	  [ -e "$$e" ] || continue; \
+	  if [ "$$(readlink -f $$e)" = "$$port" ]; then \
+	    echo "REFUSING: $$port is the medic's own radio"; exit 1; fi; \
+	done; \
+	echo "target : $$port"; echo "image  : $$(stat -c%s $$z) bytes"; \
+	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
+
 # BISECT TARGET, one variable changed: RNS_USE_ALLOCATOR is dropped.
 #
 # That flag is what makes OS.cpp override GLOBAL operator new (OS.cpp:48), so
