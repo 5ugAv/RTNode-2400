@@ -1024,7 +1024,7 @@
       #define PIN_VEXT_EN 21
 
       // LED
-      #define LED_T114_GREEN 3
+      #define LED_T114_GREEN 35 // per Heltec's pin map — was 3, which is the TFT POWER pin (blinking the 'green LED' would cycle panel power; agents, 2026-08-21)
       #define PIN_T114_LED 14
       #define NP_M 1
       const int pin_np = PIN_T114_LED;
@@ -1042,9 +1042,9 @@
 
       // TFT
       #define DISPLAY_SCALE 2
-      #define PIN_T114_TFT_MOSI 9
-      #define PIN_T114_TFT_MISO 11 // not connected
-      #define PIN_T114_TFT_SCK 8
+      #define PIN_T114_TFT_MOSI 41  // P1.09 — was 9: the P1. port prefix was DROPPED in transcription (agents, 2026-08-21); every SPI edge went to unpopulated P0 pads
+      #define PIN_T114_TFT_MISO 43  // P1.11, n/c on the panel — was 11, which COLLIDED with CS and let SPIM's pulldown hijack the CS net. 43 not -1: both nRF cores index g_ADigitalPinMap unguarded
+      #define PIN_T114_TFT_SCK  40  // P1.08 — was 8, same dropped-prefix bug
       #define PIN_T114_TFT_SS 11
       #define PIN_T114_TFT_DC 12
       #define PIN_T114_TFT_RST 2
