@@ -406,6 +406,12 @@ flash-rak4631:
 	n=$$(echo "$$links" | grep -c . || true); \
 	test "$$n" = "1" || { echo "REFUSING: need exactly ONE RAK4631 on the bus (saw $$n)"; exit 1; }; \
 	port=$$(readlink -f $$links); \
+	pid=$$(udevadm info -q property -n $$port 2>/dev/null | grep '^ID_MODEL_ID=' | cut -d= -f2); \
+	case "$$pid" in 0029|002a|0071) ;; *) \
+	  echo "REFUSING: $$port is a RUNNING APP (PID $$pid), not the bootloader."; \
+	  echo "The app and bootloader names differ by ONE capital letter — the"; \
+	  echo "PID is the truth. Double-tap RESET (or let the birth touch it)."; \
+	  exit 1;; esac; \
 	for e in /dev/serial/by-id/*Espressif*; do \
 	  [ -e "$$e" ] || continue; \
 	  if [ "$$(readlink -f $$e)" = "$$port" ]; then \
