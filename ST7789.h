@@ -150,6 +150,82 @@ class ST7789Spi : public OLEDDisplay {
       return true;
     }
 
+    // TB-field blit (T114 port, 2026-08-21, rev 2). SELF-ADDRESSING on
+    // purpose: this class's setAddrWindow() bakes in centring offsets for a
+    // DIFFERENT panel — including a NEGATIVE row offset from
+    // (240-displayHeight)/2 with height=320 — and every setRotation()
+    // variant sets MADCTL_MV (landscape swap). Both are wrong for a
+    // portrait 135x240 full-frame push, and stacking my offsets on its
+    // offsets was the first black screen. So: own MADCTL (portrait, RGB),
+    // own CASET/RASET with the standard 135x240-in-240x320 placement
+    // (col 52, row 40 — what Adafruit_ST7789::init(135,240) uses), own
+    // RAMWR, then stream rows byte-swapped (GFXcanvas16 is native-endian;
+    // the panel wants MSB first; the legacy UI never noticed because
+    // 0xFFFF/0x0000 are endian-proof).
+    // Diagnostic solid fill through the exact same addressing path as
+    // blit565 — the boot-time splash that lets the GLASS report whether
+    // the SPI/init chain works at all (T114 black-screen hunt, 2026-08-21).
+    void fill565(uint16_t color, uint16_t w, uint16_t h) {
+      set_CS(LOW);
+      _spi->beginTransaction(_spiSettings);
+      writeCommand(ST77XX_MADCTL);
+      _spi->transfer((uint8_t)0x00);
+      const uint16_t x0 = 52, y0 = 40;
+      const uint16_t x1 = x0 + w - 1, y1 = y0 + h - 1;
+      writeCommand(ST77XX_CASET);
+      _spi->transfer((uint8_t)(x0 >> 8)); _spi->transfer((uint8_t)x0);
+      _spi->transfer((uint8_t)(x1 >> 8)); _spi->transfer((uint8_t)x1);
+      writeCommand(ST77XX_RASET);
+      _spi->transfer((uint8_t)(y0 >> 8)); _spi->transfer((uint8_t)y0);
+      _spi->transfer((uint8_t)(y1 >> 8)); _spi->transfer((uint8_t)y1);
+      writeCommand(ST77XX_RAMWR);
+      static uint8_t rowbuf[512];
+      for (uint16_t x = 0; x < w; x++) {
+        rowbuf[2 * x]     = color >> 8;
+        rowbuf[2 * x + 1] = color & 0xFF;
+      }
+      for (uint16_t y = 0; y < h; y++) {
+#ifdef ESP_PLATFORM
+        _spi->transferBytes(rowbuf, NULL, 2 * w);
+#else
+        _spi->transfer(rowbuf, NULL, 2 * w);
+#endif
+      }
+      _spi->endTransaction();
+      set_CS(HIGH);
+    }
+
+    void blit565(const uint16_t *buf, uint16_t w, uint16_t h) {
+      set_CS(LOW);
+      _spi->beginTransaction(_spiSettings);
+      writeCommand(ST77XX_MADCTL);
+      _spi->transfer((uint8_t)0x00);          // portrait, RGB order
+      const uint16_t x0 = 52, y0 = 40;        // 135x240 window in the 240x320 RAM
+      const uint16_t x1 = x0 + w - 1, y1 = y0 + h - 1;
+      writeCommand(ST77XX_CASET);
+      _spi->transfer((uint8_t)(x0 >> 8)); _spi->transfer((uint8_t)x0);
+      _spi->transfer((uint8_t)(x1 >> 8)); _spi->transfer((uint8_t)x1);
+      writeCommand(ST77XX_RASET);
+      _spi->transfer((uint8_t)(y0 >> 8)); _spi->transfer((uint8_t)y0);
+      _spi->transfer((uint8_t)(y1 >> 8)); _spi->transfer((uint8_t)y1);
+      writeCommand(ST77XX_RAMWR);
+      static uint8_t rowbuf[512];
+      for (uint16_t y = 0; y < h; y++) {
+        const uint16_t *row = buf + (uint32_t)y * w;
+        for (uint16_t x = 0; x < w; x++) {
+          rowbuf[2 * x]     = row[x] >> 8;
+          rowbuf[2 * x + 1] = row[x] & 0xFF;
+        }
+#ifdef ESP_PLATFORM
+        _spi->transferBytes(rowbuf, NULL, 2 * w);
+#else
+        _spi->transfer(rowbuf, NULL, 2 * w);
+#endif
+      }
+      _spi->endTransaction();
+      set_CS(HIGH);
+    }
+
     void display(void) {
     #ifdef OLEDDISPLAY_DOUBLE_BUFFER
 

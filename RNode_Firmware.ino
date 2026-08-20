@@ -546,6 +546,16 @@ void setup() {
 
     display_unblank();
     disp_ready = display_init();
+    #if BOARD_MODEL == BOARD_HELTEC_T114
+      // T114 black-screen hunt (2026-08-21): the board reports its own
+      // display truth at boot (captured by techo_bootlog), and paints the
+      // whole glass RED through the same path the TB field uses — if this
+      // splash shows, the init+SPI+blit chain is PROVEN and the fault is
+      // content-side; if it doesn't, the fault is at panel level.
+      Serial.print("[T114-DISP] disp_ready=");
+      Serial.println(disp_ready ? 1 : 0);
+      if (disp_ready) { display.fill565(0xF800, 135, 240); delay(1500); }
+    #endif
     if (disp_ready) {
       update_display();
     } else {
@@ -2853,6 +2863,12 @@ void loop() {
   // animation loop.
   #if HAS_DISPLAY && BOARD_MODEL == BOARD_TECHO
     if (disp_ready && !display_updating) epd_glyph_service(millis());
+  #endif
+
+  // T114: Jonesey's TB field (TbField.h) — same every-loop-pass contract;
+  // it self-gates on TB_FRAME_MS internally and owns the whole panel.
+  #if HAS_DISPLAY && BOARD_MODEL == BOARD_HELTEC_T114
+    if (disp_ready && !display_updating) tracker_status_burst();
   #endif
 
   // LED solid when operational on V3/V4 boards (yield to fast blink during white screen).

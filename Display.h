@@ -1772,6 +1772,13 @@ void twatch_handle_touch() {
 #endif
 
 void update_display(bool blank = false) {
+  #if BOARD_MODEL == BOARD_HELTEC_T114
+    // The TB field (TbField.h) owns this screen — same contract as
+    // Jonesey's tracker build ("tracker_status_burst() owns the screen").
+    // The legacy 128x64 UI would fight it for the panel.
+    if (true) return;
+  #endif
+
   // T-Watch S3 Plus native status panel + touch. The upstream UI blits
   // into the top 240x128 of the panel at 1.875x scale (status glyphs
   // unreadable); we draw large touch-navigable pages in the region below
@@ -2027,3 +2034,5 @@ void ext_fb_enable() {
 void ext_fb_disable() {
   disp_ext_fb = false;
 }
+
+#include "TbField.h"
