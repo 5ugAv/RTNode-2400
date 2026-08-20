@@ -377,6 +377,43 @@ PORT ?= UNSET
 # Espressif is resolved at the same moment, and the flash is refused if they turn
 # out to be the same node. A ttyACM number is not an identity; a by-id name is.
 VARIANT ?= release
+# ── RAK4631 as an RTNode-2400 ────────────────────────────────────────────────
+# Same nRF52840 + SX1262 family as the T-Echo, so the whole techo recipe
+# applies: arduino-cli (every pio nRF env fails on auto-prototypes), the
+# noalloc flag set (RNS_USE_ALLOCATOR crashes pre-main on this core), the
+# sketch link, per-target output dirs, and the self-naming USB identity the
+# medic's detector keys on. Builds on the RAK BSP (rakwireless:nrf52),
+# installed with the native-ARM64 toolchain trick — the BSP publishes no
+# aarch64 host tools, but the platform files are host-independent and the
+# tool deps are symlinked to the adafruit-native ones.
+USB_ID_RAK := --build-property 'build.usb_manufacturer="RAKwireless"' --build-property 'build.usb_product="RAK4631 RTNode-2400"'
+
+firmware-rak4631-noalloc: sketch-link
+	cd $(SKETCH_LINK) && arduino-cli compile --log --fqbn rakwireless:nrf52:WisCoreRAK4631Board $(USB_ID_RAK) --output-dir $(CURDIR)/build/rak4631-noalloc \
+	  --library lib/microReticulum \
+	  --build-property "compiler.cpp.extra_flags=-DBOARD_MODEL=0x51 -DHAS_RNS -DRNS_USE_FS -DRNS_PERSIST_PATHS -fexceptions" \
+	  --build-property "compiler.libraries.ldflags=-lstdc++ -lsupc++" \
+	  .
+
+# Serial-DFU flash for the RAK4631, with the same guards as flash-techo: found
+# by its OWN identity (bootloader "WisBlock_RAK4631" or the renamed app),
+# refused outright if that ever resolves to the medic's radio, refused when
+# more than one candidate matches.
+flash-rak4631:
+	@z="$(CURDIR)/build/rak4631-noalloc/RNode_Firmware.ino.zip"; \
+	test -f "$$z" || { echo "No image: $$z (make firmware-rak4631-noalloc)"; exit 1; }; \
+	links=$$(ls /dev/serial/by-id/*RAK4631* 2>/dev/null); \
+	n=$$(echo "$$links" | grep -c . || true); \
+	test "$$n" = "1" || { echo "REFUSING: need exactly ONE RAK4631 on the bus (saw $$n)"; exit 1; }; \
+	port=$$(readlink -f $$links); \
+	for e in /dev/serial/by-id/*Espressif*; do \
+	  [ -e "$$e" ] || continue; \
+	  if [ "$$(readlink -f $$e)" = "$$port" ]; then \
+	    echo "REFUSING: $$port is the medic's own radio"; exit 1; fi; \
+	done; \
+	echo "target : $$port"; echo "image  : $$(stat -c%s $$z) bytes"; \
+	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
+
 # BISECT TARGET, one variable changed: RNS_USE_ALLOCATOR is dropped.
 #
 # That flag is what makes OS.cpp override GLOBAL operator new (OS.cpp:48), so
