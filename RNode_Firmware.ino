@@ -546,16 +546,6 @@ void setup() {
 
     display_unblank();
     disp_ready = display_init();
-    #if BOARD_MODEL == BOARD_HELTEC_T114
-      // T114 black-screen hunt (2026-08-21): the board reports its own
-      // display truth at boot (captured by techo_bootlog), and paints the
-      // whole glass RED through the same path the TB field uses — if this
-      // splash shows, the init+SPI+blit chain is PROVEN and the fault is
-      // content-side; if it doesn't, the fault is at panel level.
-      Serial.print("[T114-DISP] disp_ready=");
-      Serial.println(disp_ready ? 1 : 0);
-      if (disp_ready) { display.fill565(0xF800, 135, 240); delay(1500); }
-    #endif
     if (disp_ready) {
       update_display();
     } else {

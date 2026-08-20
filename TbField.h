@@ -486,6 +486,46 @@ void tracker_status_burst() {
   }
 
 #if BOARD_MODEL == BOARD_HELTEC_T114
+  // ---- operator overlay (2026-08-21): connections + LIVE frequency,
+  // floated over the field — the field keeps the whole screen. Fleet
+  // rules: same rows everywhere, a capability this board lacks keeps its
+  // row with a line through the circle. Frequency is read off the radio
+  // state, never a hardcoded string.
+  tb_canvas.setTextWrap(false);
+  tb_canvas.setTextSize(1);
+  {
+    struct { const char *l; int st; } ov_rows[4] = {
+      { "LORA", radio_online ? 2 : 1 },
+      { "WIFI", 0 },
+      { "LAN",  0 },
+      { "BLE",  (bt_state != BT_STATE_OFF) ? 2 : 1 },
+    };
+    for (int r = 0; r < 4; r++) {
+      int cy = 8 + r * 11, cx = 7;
+      if (ov_rows[r].st == 2) {
+        tb_canvas.fillCircle(cx, cy, 3, tb565(60, 200, 100));
+      } else {
+        tb_canvas.drawCircle(cx, cy, 3, tb565(120, 120, 125));
+        if (ov_rows[r].st == 0)
+          tb_canvas.drawLine(cx - 5, cy + 5, cx + 5, cy - 5,
+                             tb565(225, 80, 80));
+      }
+      tb_canvas.setCursor(cx + 8, cy - 3);
+      tb_canvas.setTextColor(tb565(238, 230, 215));
+      tb_canvas.print(ov_rows[r].l);
+    }
+  }
+  {
+    char fbuf[12];
+    snprintf(fbuf, sizeof(fbuf), "%.3f", (double)lora_freq / 1000000.0);
+    tb_canvas.setTextSize(2);
+    int tw = (int)strlen(fbuf) * 12;
+    tb_canvas.setCursor(TB_W - tw - 3, TB_FIELD_H - 20);
+    tb_canvas.setTextColor(tb565(240, 180, 60));
+    tb_canvas.print(fbuf);
+    tb_canvas.setTextSize(1);
+  }
+
   display.blit565(tb_canvas.getBuffer(), TB_W, TB_H);
 #else
   display.startWrite();
