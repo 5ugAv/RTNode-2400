@@ -85,6 +85,12 @@ enum {
     HB_PWR_CHARGING   = 0x02,  // bit1: battery charging
     HB_PWR_SOLAR      = 0x04,  // bit2: solar input present
     HB_PWR_MAINS      = 0x08,  // bit3: wall/DC external input present
+    // Bluetooth rides the spare bits of this byte — the main flags byte is
+    // full. KNOWN/UP pair so firmware predating these bits decodes as
+    // UNKNOWN, never as "reported down" (the SolarLove rule; must match
+    // monitor/health_beacon.py bits 0x10/0x20).
+    HB_PWR_BT_KNOWN   = 0x10,  // bit4: this beacon carries a BT verdict
+    HB_PWR_BT_UP      = 0x20,  // bit5: bluetooth up (only if BT_KNOWN)
 };
 
 // "Not reported" sentinels — MUST match the decoder.

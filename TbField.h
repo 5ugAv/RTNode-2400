@@ -349,32 +349,55 @@ void tracker_status_burst() {
   // and TX/RX bursts fly across it. Colours kept low so it reads as a
   // watermark, not a competitor.
   {
+    // AUTHENTIC Reticulum logo layout (operator, 2026-08-21: "replace your
+    // interpretation with the authentic reticulum logo"). Node positions,
+    // edges, the ring-breaking edge nodes and the RNS letters are traced
+    // from the real mark, normalised to the ring and scaled to the
+    // approved x2 size (ring r=60).
     int cx = TB_CX, cy = TB_CY;
     uint16_t ring = tb565(46, 62, 58);
     uint16_t node = tb565(60, 92, 82);
-    tb_canvas.drawCircle(cx, cy, 60, ring);   // x2 — x3 was too much (operator)
+    // double outer ring + thin inner ring, as the mark has
+    tb_canvas.drawCircle(cx, cy, 60, ring);
     tb_canvas.drawCircle(cx, cy, 59, ring);
-    int hub_x = cx - 44, hub_y = cy - 8;
-    int ax = cx - 4,  ay = cy - 44;
-    int bx = cx - 36, by = cy - 88;
-    int cx2 = cx + 44, cy2 = cy - 8;
-    int dx = cx - 42, dy = cy + 36;
-    int ex = cx + 4,  ey = cy + 32;
-    int fx = cx + 28, fy = cy + 20;
-    tb_canvas.drawLine(hub_x, hub_y, ax, ay, ring);
-    tb_canvas.drawLine(ax, ay, bx, by, ring);
-    tb_canvas.drawLine(hub_x, hub_y, cx2, cy2, ring);
-    tb_canvas.drawLine(hub_x, hub_y, dx, dy, ring);
-    tb_canvas.drawLine(dx, dy, ex, ey, ring);
-    tb_canvas.drawLine(ex, ey, fx, fy, ring);
-    tb_canvas.drawLine(fx, fy, cx2, cy2, ring);
-    tb_canvas.fillCircle(hub_x, hub_y, 10, node);
-    tb_canvas.fillCircle(ax, ay, 6, node);
-    tb_canvas.fillCircle(bx, by, 4, node);
-    tb_canvas.fillCircle(cx2, cy2, 8, node);
-    tb_canvas.fillCircle(dx, dy, 8, node);
-    tb_canvas.fillCircle(ex, ey, 6, node);
-    tb_canvas.fillCircle(fx, fy, 4, node);
+    tb_canvas.drawCircle(cx, cy, 54, ring);
+    // nodes (traced): hub pair centre-left, edge-breaker right, corner
+    // node bottom-left, three-dot chain top, three-dot arc bottom
+    int hub_x = cx - 9,  hub_y = cy - 1;    // the big hub
+    int cmp_x = cx + 1,  cmp_y = cy;        // its touching companion
+    int red_x = cx + 61, red_y = cy - 1;    // right edge node ON the ring
+    int blc_x = cx - 57, blc_y = cy + 53;   // bottom-left corner node
+    int ta_x = cx - 30, ta_y = cy - 48;     // top chain: apex
+    int tb_x = cx - 14, tb_y = cy - 34;     //   mid (links to hub)
+    int tc_x = cx - 44, tc_y = cy - 22;     //   left
+    int ba_x = cx - 7,  ba_y = cy + 34;     // bottom arc: big
+    int bb_x = cx + 12, bb_y = cy + 41;     //   mid
+    int bc_x = cx + 24, bc_y = cy + 29;     //   small
+    tb_canvas.drawLine(tc_x, tc_y, ta_x, ta_y, ring);
+    tb_canvas.drawLine(ta_x, ta_y, tb_x, tb_y, ring);
+    tb_canvas.drawLine(tb_x, tb_y, hub_x, hub_y, ring);
+    tb_canvas.drawLine(cmp_x, cmp_y, red_x, red_y, ring);
+    tb_canvas.drawLine(hub_x, hub_y, blc_x, blc_y, ring);
+    tb_canvas.drawLine(blc_x, blc_y, ba_x, ba_y, ring);
+    tb_canvas.drawLine(ba_x, ba_y, bb_x, bb_y, ring);
+    tb_canvas.drawLine(bb_x, bb_y, bc_x, bc_y, ring);
+    tb_canvas.drawLine(bc_x, bc_y, red_x, red_y, ring);
+    tb_canvas.fillCircle(hub_x, hub_y, 8, node);
+    tb_canvas.fillCircle(cmp_x, cmp_y, 5, node);
+    tb_canvas.fillCircle(red_x, red_y, 7, node);
+    tb_canvas.fillCircle(blc_x, blc_y, 7, node);
+    tb_canvas.fillCircle(ta_x, ta_y, 3, node);
+    tb_canvas.fillCircle(tb_x, tb_y, 4, node);
+    tb_canvas.fillCircle(tc_x, tc_y, 3, node);
+    tb_canvas.fillCircle(ba_x, ba_y, 6, node);
+    tb_canvas.fillCircle(bb_x, bb_y, 4, node);
+    tb_canvas.fillCircle(bc_x, bc_y, 3, node);
+    // the RNS letters, upper right inside the ring, as on the mark
+    tb_canvas.setTextWrap(false);
+    tb_canvas.setTextSize(1);
+    tb_canvas.setTextColor(node);
+    tb_canvas.setCursor(cx + 14, cy - 28);
+    tb_canvas.print("RNS");
   }
 #endif
 

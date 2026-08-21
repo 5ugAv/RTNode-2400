@@ -1042,6 +1042,12 @@
 
       // TFT
       #define DISPLAY_SCALE 2
+      // Fault floor, T114-tuned. The TB field canvas is 135x240x2 = ~65 KB of
+      // heap, paid PERMANENTLY and on purpose - the board runs at ~30 KB free
+      // when perfectly healthy, which sat under the fleet default of 40 KB and
+      // wore a fault bit forever (t115, 2026-08-21). 16 KB still fires well
+      // before allocation failure, but only on NEW pressure, not on the rent.
+      #define HEALTH_FAULT_HEAP_KB 16
       #define PIN_T114_TFT_MOSI 41  // P1.09 — was 9: the P1. port prefix was DROPPED in transcription (agents, 2026-08-21); every SPI edge went to unpopulated P0 pads
       #define PIN_T114_TFT_MISO 43  // P1.11, n/c on the panel — was 11, which COLLIDED with CS and let SPIM's pulldown hijack the CS net. 43 not -1: both nRF cores index g_ADigitalPinMap unguarded
       #define PIN_T114_TFT_SCK  40  // P1.08 — was 8, same dropped-prefix bug

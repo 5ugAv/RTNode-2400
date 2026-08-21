@@ -96,7 +96,13 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_V2], bool fault = 
           (h.on_battery ? HB_PWR_ON_BATTERY : 0)
         | (h.charging   ? HB_PWR_CHARGING   : 0)
         | (h.on_solar   ? HB_PWR_SOLAR      : 0)
-        | (h.on_mains   ? HB_PWR_MAINS      : 0);
+        | (h.on_mains   ? HB_PWR_MAINS      : 0)
+        // the live Bluetooth verdict (operator, 2026-08-21: the board's
+        // screen said BT active while VITALS said unknown — the beacon
+        // simply had no word for it). KNOWN set on every beacon from this
+        // firmware; UP mirrors the same source the screen row uses.
+        | HB_PWR_BT_KNOWN
+        | ((bt_state != BT_STATE_OFF) ? HB_PWR_BT_UP : 0);
 
     health_pack_beacon_v2(out,
         uptime_s, heap_kb, rssi, health_reset_reason_code(),
