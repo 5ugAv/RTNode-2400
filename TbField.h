@@ -83,10 +83,20 @@ extern bool radio_online;   // true once the host sends CMD_RADIO_STATE=on (Reti
 #endif
 // idle "online" breathing (only when radio_online = Reticulum has opened this RNode)
 #define TB_BREATH_MS     4200    // breath period (slow, calm)
+#if BOARD_MODEL == BOARD_HELTEC_T114
+// T114: the 135x240 glass swallowed the tracker-sized pulse (operator,
+// 2026-08-21 morning: "hard to see — expand a bit more on its outward
+// pulse"). Wider swell + brighter inhale, same calm period.
+#define TB_BREATH_MIN    8
+#define TB_BREATH_MAX    64
+#define TB_BREATH_S0     4.0f
+#define TB_BREATH_S1     16.0f
+#else
 #define TB_BREATH_MIN    6       // centre brightness at exhale (tight/dim)
 #define TB_BREATH_MAX    48      // centre brightness at inhale (wide/bright)
 #define TB_BREATH_S0     3.0f    // gaussian glow sigma at exhale (px)
 #define TB_BREATH_S1     8.0f    // gaussian glow sigma at inhale (px)
+#endif
 #define TB_BREATH_R      40      // colour: soft aqua = "on the mesh"
 #define TB_BREATH_G      150
 #define TB_BREATH_B      120
@@ -481,7 +491,10 @@ void tracker_status_burst() {
         r_ = (uint8_t)(30 + u*(235-30)); g_ = (uint8_t)(200 + u*(170-200)); b_ = (uint8_t)(40*(1.0f-u)); }
       else { float u = (tb_bar_norm - 0.5f) / 0.5f;
         r_ = 235; g_ = (uint8_t)(170 + u*(30-170)); b_ = 0; }
-      if (fw > 0) tb_canvas.fillRect(0, by, fw, TB_BAR_H, tb565(r_, g_, b_));
+      // fill REVERSED (operator, 2026-08-21): the bar grows AWAY from
+      // the antenna end as the floor worsens — bad news retreats from
+      // the goal, on every board.
+      if (fw > 0) tb_canvas.fillRect(TB_W - fw, by, fw, TB_BAR_H, tb565(r_, g_, b_));
     }
   }
 
