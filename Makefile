@@ -419,6 +419,7 @@ flash-rak4631:
 	done; \
 	echo "target : $$port"; echo "image  : $$(stat -c%s $$z) bytes"; \
 	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
+	@bash $(CURDIR)/rebless.sh "/dev/serial/by-id/*RAK4631*"
 
 # Heltec Mesh Node T114 (nRF52840 + SX1262), BOARD_MODEL 0x3C — the third
 # nRF RTNode. Built on Heltec's OWN core (Heltec_nRF52, HT-n5262 board): the
@@ -459,6 +460,7 @@ flash-t114:
 	done; \
 	echo "target : $$port"; echo "image  : $$(stat -c%s $$z) bytes"; \
 	adafruit-nrfutil --verbose dfu serial -pkg "$$z" -p "$$port" -b 115200 --singlebank
+	@bash $(CURDIR)/rebless.sh "/dev/serial/by-id/*T114_RTNode-2400*"
 
 # BISECT TARGET, one variable changed: RNS_USE_ALLOCATOR is dropped.
 #
