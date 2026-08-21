@@ -341,6 +341,44 @@ void tracker_status_burst() {
 
   tb_canvas.fillScreen(0x0000);
 
+#if BOARD_MODEL == BOARD_HELTEC_T114
+  // ---- the Reticulum mark, dim, BEHIND the pulse (operator, 2026-08-21:
+  // "put the reticulum logo behind the pulse"). Drawn FIRST — the furthest
+  // background layer: the noise haze speckles OVER it, the breath
+  // glows over it, bursts fly across it, so the aqua breathing glow brightens over it
+  // and TX/RX bursts fly across it. Colours kept low so it reads as a
+  // watermark, not a competitor.
+  {
+    int cx = TB_CX, cy = TB_CY;
+    uint16_t ring = tb565(46, 62, 58);
+    uint16_t node = tb565(60, 92, 82);
+    tb_canvas.drawCircle(cx, cy, 60, ring);   // x2 — x3 was too much (operator)
+    tb_canvas.drawCircle(cx, cy, 59, ring);
+    int hub_x = cx - 44, hub_y = cy - 8;
+    int ax = cx - 4,  ay = cy - 44;
+    int bx = cx - 36, by = cy - 88;
+    int cx2 = cx + 44, cy2 = cy - 8;
+    int dx = cx - 42, dy = cy + 36;
+    int ex = cx + 4,  ey = cy + 32;
+    int fx = cx + 28, fy = cy + 20;
+    tb_canvas.drawLine(hub_x, hub_y, ax, ay, ring);
+    tb_canvas.drawLine(ax, ay, bx, by, ring);
+    tb_canvas.drawLine(hub_x, hub_y, cx2, cy2, ring);
+    tb_canvas.drawLine(hub_x, hub_y, dx, dy, ring);
+    tb_canvas.drawLine(dx, dy, ex, ey, ring);
+    tb_canvas.drawLine(ex, ey, fx, fy, ring);
+    tb_canvas.drawLine(fx, fy, cx2, cy2, ring);
+    tb_canvas.fillCircle(hub_x, hub_y, 10, node);
+    tb_canvas.fillCircle(ax, ay, 6, node);
+    tb_canvas.fillCircle(bx, by, 4, node);
+    tb_canvas.fillCircle(cx2, cy2, 8, node);
+    tb_canvas.fillCircle(dx, dy, 8, node);
+    tb_canvas.fillCircle(ex, ey, 6, node);
+    tb_canvas.fillCircle(fx, fy, 4, node);
+  }
+#endif
+
+
   // --- noise floor -> ambient haze, drawn FIRST so everything composites over it ---
   float nf_norm = 0.0f;
   if (noise_floor_sampled) {
@@ -365,6 +403,7 @@ void tracker_status_burst() {
       tb_canvas.drawPixel(x, y, tb_scale(hazecol, br));
     }
   }
+
 
   int cc[TB_MAX_COHORTS] = {0};
   for (int i = 0; i < TB_PARTS; i++) {

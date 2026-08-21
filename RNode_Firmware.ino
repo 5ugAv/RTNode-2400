@@ -2861,6 +2861,12 @@ void loop() {
     if (disp_ready && !display_updating) tracker_status_burst();
   #endif
 
+  // Lingering NeoPixel event flashes (Utilities.h): release the pixel
+  // once an RX/TX hold expires — without this the latch would stick on.
+  #if MCU_VARIANT == MCU_NRF52 && defined(HAS_NP) && HAS_NP == true
+    np_led_service();
+  #endif
+
   // LED solid when operational on V3/V4 boards (yield to fast blink during white screen).
   // In FIREWALL_MODE the OLED is the status indicator — keep the LED off.
   #if (BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC32_V3) && !defined(FIREWALL_MODE)

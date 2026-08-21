@@ -375,10 +375,34 @@ extern RNS::Reticulum reticulum;
 	#endif
 #elif MCU_VARIANT == MCU_NRF52
     #if HAS_NP == true
-      void led_rx_on()  { npset(0, 0, 0xFF); }
-      void led_rx_off() {	npset(0, 0, 0); }
-      void led_tx_on()  { npset(0xFF, 0x50, 0x00); }
-      void led_tx_off() { npset(0, 0, 0); }
+      // LINGERING event flashes (operator, 2026-08-21: "make the RX
+      // flashes linger"). led_rx_on/off fire microseconds apart in the
+      // radio path, so the pixel's blue was physically invisible — the
+      // same accident the T114 screen needed a TX latch for. on() paints
+      // and stamps a minimum hold; off() only clears once the hold has
+      // expired, otherwise it leaves the colour for np_led_service()
+      // (called every loop pass) to clear on time. Deliberate sequences
+      // (birth cry, health ack, identify, LED test) drive npset directly
+      // and are untouched — the service only clears what the latch set.
+      #define NP_RX_HOLD_MS 600
+      #define NP_TX_HOLD_MS 400
+      uint32_t np_hold_until = 0;
+      bool np_hold_active = false;
+      void led_rx_on()  { npset(0, 0, 0xFF);
+                          np_hold_until = millis() + NP_RX_HOLD_MS;
+                          np_hold_active = true; }
+      void led_rx_off() { if (!np_hold_active || (int32_t)(millis() - np_hold_until) >= 0) {
+                            npset(0, 0, 0); np_hold_active = false; } }
+      void led_tx_on()  { npset(0xFF, 0x50, 0x00);
+                          np_hold_until = millis() + NP_TX_HOLD_MS;
+                          np_hold_active = true; }
+      void led_tx_off() { if (!np_hold_active || (int32_t)(millis() - np_hold_until) >= 0) {
+                            npset(0, 0, 0); np_hold_active = false; } }
+      void np_led_service() {
+        if (np_hold_active && (int32_t)(millis() - np_hold_until) >= 0) {
+          npset(0, 0, 0); np_hold_active = false;
+        }
+      }
 			void led_id_on()  { npset(0x90, 0, 0x70); }
 			void led_id_off() { npset(0, 0, 0); }
     #elif BOARD_MODEL == BOARD_RAK4631
