@@ -82,7 +82,17 @@ inline uint8_t health_reset_reason_code() {
 // in a later increment; false today). Battery is board-gated in collect_health:
 // until a verified VBAT pin is enabled it packs the "not reported" sentinels, so
 // the payload is always a valid v2 beacon the tool decodes.
-inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_V2], bool fault = false) {
+#if HAS_GPS
+// v3: this board can know where it stands (T114 + L76K). The gps object
+// lives in the .ino; TinyGPSPlus.h's include guard makes this safe.
+#include <TinyGPSPlus.h>
+extern TinyGPSPlus gps;
+#define HEALTH_BEACON_LEN_LOCAL HEALTH_BEACON_LEN_V3
+#else
+#define HEALTH_BEACON_LEN_LOCAL HEALTH_BEACON_LEN_V2
+#endif
+
+inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_LOCAL], bool fault = false) {
     HealthSnapshot h;
     collect_health(h);
 
@@ -104,6 +114,28 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_V2], bool fault = 
         | HB_PWR_BT_KNOWN
         | ((bt_state != BT_STATE_OFF) ? HB_PWR_BT_UP : 0);
 
+#if HAS_GPS
+    // v3 position tail: the node's OWN live claim about where it stands.
+    // Sentinel when there's no FRESH fix (valid + < 10 s old — the
+    // telemetry-fresh-vs-actual-fix trap) so a stale place is never
+    // announced. fuzzed=false: kin nodes tell their medic the truth; the
+    // wild-node fuzz policy rides the same bit when it lands.
+    int32_t lat_u = HB_POSITION_UNKNOWN, lng_u = HB_POSITION_UNKNOWN;
+    bool gps_fresh = gps.location.isValid() && gps.location.age() < 10000;
+    if (gps_fresh) {
+        lat_u = (int32_t)lround(gps.location.lat() * 1000000.0);
+        lng_u = (int32_t)lround(gps.location.lng() * 1000000.0);
+    }
+    health_pack_beacon_v3(out,
+        uptime_s, heap_kb, rssi, health_reset_reason_code(),
+        h.wifi_connected, h.lora_online, h.tcp_backbone_connected,
+        h.local_tcp_server_up, h.wdt_armed, h.psram, fault, airtime_lock,
+        (uint8_t)BOARD_MODEL,
+        RTNODE_FW_MAJOR, RTNODE_FW_MINOR, RTNODE_FW_PATCH,
+        h.battery_mv, h.battery_pct, power_flags,
+        h.lora_snr_db, h.lora_rssi_dbm,
+        lat_u, lng_u, (uint8_t)gps.satellites.value(), false);
+#else
     health_pack_beacon_v2(out,
         uptime_s, heap_kb, rssi, health_reset_reason_code(),
         h.wifi_connected, h.lora_online, h.tcp_backbone_connected,
@@ -112,15 +144,16 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_V2], bool fault = 
         RTNODE_FW_MAJOR, RTNODE_FW_MINOR, RTNODE_FW_PATCH,
         h.battery_mv, h.battery_pct, power_flags,
         h.lora_snr_db, h.lora_rssi_dbm);
+#endif
 }
 
 // Emit one beacon announce immediately (also used by the on-demand poll reply).
 inline void health_beacon_send() {
     if (!health_destination) return;
-    uint8_t payload[HEALTH_BEACON_LEN_V2];
+    uint8_t payload[HEALTH_BEACON_LEN_LOCAL];
     health_build_beacon(payload, health_fault);
     RNS::Bytes app_data;
-    app_data.append(payload, HEALTH_BEACON_LEN_V2);
+    app_data.append(payload, HEALTH_BEACON_LEN_LOCAL);
     health_destination.announce(app_data);
     // Verification log: the exact bytes on the wire + the destination hash the
     // tool keys on. Decode against monitor/health_beacon.py.
