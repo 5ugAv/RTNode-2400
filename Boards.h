@@ -1029,6 +1029,20 @@
       #define NP_M 1
       const int pin_np = PIN_T114_LED;
 
+      // GNSS: Quectel L76K on the P3 connector (optional module; fitted in
+      // the medic's cased unit). Pins TRIPLE-VERIFIED 2026-08-27 against the
+      // Heltec V2.0 schematic NETLIST + Meshtastic variant + RNode_CE —
+      // note Meshtastic's source COMMENTS have RX/TX swapped; its operative
+      // Serial1 mapping agrees with these:
+      #define HAS_GPS true
+      #define GPS_BAUD_RATE 9600
+      const int pin_gps_rx = 37;    // P1.05  <- GPS TX (the nRF LISTENS here)
+      const int pin_gps_tx = 39;    // P1.07  -> GPS RX
+      const int pin_gps_wake = 34;  // P1.02, HIGH = force wake
+      // power: PIN_VEXT_EN (P0.21, active-HIGH) gates the Ve_3V3 rail that
+      // feeds the GNSS **and the two SK6812 RGB LEDs** — never drop it to
+      // sleep the GPS; use pin_gps_wake instead.
+
       // SPI
       #define PIN_T114_MOSI 22
       #define PIN_T114_MISO 23

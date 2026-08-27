@@ -26,6 +26,11 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
+
+#if HAS_GPS
+  #include <TinyGPSPlus.h>
+  TinyGPSPlus gps;   // T114: L76K on Serial1 (pins remapped in setup)
+#endif
 #include "BirthCry.h"   // first-flash LED celebration + health-ack blink
 
 // CBA Firewall Mode
@@ -342,6 +347,19 @@ void setup() {
   }
   // CBA Test
   delay(2000);
+
+  #if HAS_GPS
+    // T114 GNSS bring-up. Rail driven explicitly (it also feeds the RGB
+    // LEDs, so it is usually on already — this makes GPS independent of
+    // LED init order). ~1s module warmup happens while the rest of setup
+    // runs; the display's GPS pin appears only when NMEA actually flows.
+    pinMode(PIN_VEXT_EN, OUTPUT);
+    digitalWrite(PIN_VEXT_EN, HIGH);
+    pinMode(pin_gps_wake, OUTPUT);
+    digitalWrite(pin_gps_wake, HIGH);
+    Serial1.setPins(pin_gps_rx, pin_gps_tx);
+    Serial1.begin(GPS_BAUD_RATE);
+  #endif
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -2638,6 +2656,9 @@ void tx_queue_handler() {
 void work_while_waiting() { loop(); }
 
 void loop() {
+  #if HAS_GPS
+    while (Serial1.available() > 0) gps.encode(Serial1.read());
+  #endif
   #if BOARD_MODEL == BOARD_TECHO
     led_online_tick();   // green breath = Reticulum has opened this radio
     check_loop_stack_headroom();

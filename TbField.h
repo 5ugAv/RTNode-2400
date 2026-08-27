@@ -17,6 +17,13 @@ extern int last_rssi;
 extern int current_rssi, noise_floor;
 extern bool noise_floor_sampled;   // false until 128 samples collected / after an RF recal
 extern bool radio_online;   // true once the host sends CMD_RADIO_STATE=on (Reticulum opened us)
+#if BOARD_MODEL == BOARD_HELTEC_T114 && defined(HAS_GPS)
+// the GNSS object lives in the .ino, declared after this header's include
+// chain — forward extern; TinyGPSPlus.h's include guard makes this safe.
+#include <TinyGPSPlus.h>
+extern TinyGPSPlus gps;
+#include "GpsPin.h"   // the painted map-pin status icon (red/green/absent)
+#endif
 
 // ---- tunables ---------------------------------------------------------------
 #if BOARD_MODEL == BOARD_HELTEC_T114
@@ -341,65 +348,111 @@ void tracker_status_burst() {
 
   tb_canvas.fillScreen(0x0000);
 
-#if BOARD_MODEL == BOARD_HELTEC_T114
   // ---- the Reticulum mark, dim, BEHIND the pulse (operator, 2026-08-21:
   // "put the reticulum logo behind the pulse"). Drawn FIRST — the furthest
   // background layer: the noise haze speckles OVER it, the breath
   // glows over it, bursts fly across it, so the aqua breathing glow brightens over it
   // and TX/RX bursts fly across it. Colours kept low so it reads as a
-  // watermark, not a competitor.
+  // watermark, not a competitor. Both display boards carry it (operator,
+  // 2026-08-27: "give the heltec tracker the same logo in the centre") —
+  // geometry is traced once at ring r=60 and scaled per panel.
   {
     // AUTHENTIC Reticulum logo layout (operator, 2026-08-21: "replace your
     // interpretation with the authentic reticulum logo"). Node positions,
-    // edges, the ring-breaking edge nodes and the RNS letters are traced
-    // from the real mark, normalised to the ring and scaled to the
-    // approved x2 size (ring r=60).
+    // edges and the ring-breaking edge nodes are traced from the real mark,
+    // normalised to the ring.
+#if BOARD_MODEL == BOARD_HELTEC_T114
+    const float mk = 1.0f;           // ring r=60, the approved x2 size
+#else
+    const float mk = 34.0f / 60.0f;  // tracker: r=34 fills the 75px field
+#endif
+#define TB_MK(v) ((int)lroundf((v) * mk))
     int cx = TB_CX, cy = TB_CY;
     uint16_t ring = tb565(46, 62, 58);
     uint16_t node = tb565(60, 92, 82);
     // double outer ring + thin inner ring, as the mark has
-    tb_canvas.drawCircle(cx, cy, 60, ring);
-    tb_canvas.drawCircle(cx, cy, 59, ring);
-    tb_canvas.drawCircle(cx, cy, 54, ring);
+    tb_canvas.drawCircle(cx, cy, TB_MK(60), ring);
+    tb_canvas.drawCircle(cx, cy, TB_MK(60) - 1, ring);
+    tb_canvas.drawCircle(cx, cy, TB_MK(54), ring);
     // nodes (traced): hub pair centre-left, edge-breaker right, corner
     // node bottom-left, three-dot chain top, three-dot arc bottom
-    int hub_x = cx - 9,  hub_y = cy - 1;    // the big hub
-    int cmp_x = cx + 1,  cmp_y = cy;        // its touching companion
-    int red_x = cx + 61, red_y = cy - 1;    // right edge node ON the ring
-    int blc_x = cx - 57, blc_y = cy + 53;   // bottom-left corner node
-    int ta_x = cx - 30, ta_y = cy - 48;     // top chain: apex
-    int tb_x = cx - 14, tb_y = cy - 34;     //   mid (links to hub)
-    int tc_x = cx - 44, tc_y = cy - 22;     //   left
-    int ba_x = cx - 7,  ba_y = cy + 34;     // bottom arc: big
-    int bb_x = cx + 12, bb_y = cy + 41;     //   mid
-    int bc_x = cx + 24, bc_y = cy + 29;     //   small
+    // ONE hub dot EXACTLY on the breath-pulse centre (operator, 2026-08-27,
+    // after three rounds on glass: the offset hub read as a crescent moon
+    // at pulse-minimum, and ANY companion beside it read as clutter —
+    // "two dots slightly off centre". The mark's touching-pair detail is
+    // dropped; the right edge-node's line now runs from the hub itself.
+    // Approved from the single-hub PIL mock).
+    int hub_x = cx,              hub_y = cy;
+    int red_x = cx + TB_MK(61),  red_y = cy + TB_MK(-1);  // right edge node ON the ring
+    int blc_x = cx + TB_MK(-57), blc_y = cy + TB_MK(53);  // bottom-left corner node
+    int ta_x = cx + TB_MK(-30), ta_y = cy + TB_MK(-48);   // top chain: apex
+    int tb_x = cx + TB_MK(-14), tb_y = cy + TB_MK(-34);   //   mid (links to hub)
+    int tc_x = cx + TB_MK(-44), tc_y = cy + TB_MK(-22);   //   left
+    int ba_x = cx + TB_MK(-7),  ba_y = cy + TB_MK(34);    // bottom arc: big
+    int bb_x = cx + TB_MK(12),  bb_y = cy + TB_MK(41);    //   mid
+    int bc_x = cx + TB_MK(24),  bc_y = cy + TB_MK(29);    //   small
     tb_canvas.drawLine(tc_x, tc_y, ta_x, ta_y, ring);
     tb_canvas.drawLine(ta_x, ta_y, tb_x, tb_y, ring);
     tb_canvas.drawLine(tb_x, tb_y, hub_x, hub_y, ring);
-    tb_canvas.drawLine(cmp_x, cmp_y, red_x, red_y, ring);
+    tb_canvas.drawLine(hub_x, hub_y, red_x, red_y, ring);
     tb_canvas.drawLine(hub_x, hub_y, blc_x, blc_y, ring);
     tb_canvas.drawLine(blc_x, blc_y, ba_x, ba_y, ring);
     tb_canvas.drawLine(ba_x, ba_y, bb_x, bb_y, ring);
     tb_canvas.drawLine(bb_x, bb_y, bc_x, bc_y, ring);
     tb_canvas.drawLine(bc_x, bc_y, red_x, red_y, ring);
-    tb_canvas.fillCircle(hub_x, hub_y, 8, node);
-    tb_canvas.fillCircle(cmp_x, cmp_y, 5, node);
-    tb_canvas.fillCircle(red_x, red_y, 7, node);
-    tb_canvas.fillCircle(blc_x, blc_y, 7, node);
-    tb_canvas.fillCircle(ta_x, ta_y, 3, node);
-    tb_canvas.fillCircle(tb_x, tb_y, 4, node);
-    tb_canvas.fillCircle(tc_x, tc_y, 3, node);
-    tb_canvas.fillCircle(ba_x, ba_y, 6, node);
-    tb_canvas.fillCircle(bb_x, bb_y, 4, node);
-    tb_canvas.fillCircle(bc_x, bc_y, 3, node);
-    // the RNS letters, upper right inside the ring, as on the mark
-    tb_canvas.setTextWrap(false);
-    tb_canvas.setTextSize(1);
-    tb_canvas.setTextColor(node);
-    tb_canvas.setCursor(cx + 14, cy - 28);
-    tb_canvas.print("RNS");
-  }
+    tb_canvas.fillCircle(hub_x, hub_y, TB_MK(8), node);
+    tb_canvas.fillCircle(red_x, red_y, TB_MK(7), node);
+    tb_canvas.fillCircle(blc_x, blc_y, TB_MK(7), node);
+    tb_canvas.fillCircle(ta_x, ta_y, TB_MK(3), node);
+    tb_canvas.fillCircle(tb_x, tb_y, TB_MK(4), node);
+    tb_canvas.fillCircle(tc_x, tc_y, TB_MK(3), node);
+    tb_canvas.fillCircle(ba_x, ba_y, TB_MK(6), node);
+    tb_canvas.fillCircle(bb_x, bb_y, TB_MK(4), node);
+    tb_canvas.fillCircle(bc_x, bc_y, TB_MK(3), node);
+    // the board's flashed ROLE, upper right inside the ring where the mark
+    // carries its RNS letters (operator, 2026-08-27: "remove the RNS ...
+    // replace with RNode or RTNode respective of what it is flashed as").
+    // Read LIVE from op_mode — MODE_TNC is the transport role — never a
+    // build-time constant, so a reflash between roles tells the truth.
+    // PIL-approved layouts: T114 right-aligned to cx+46 at cy-28; tracker
+    // fixed at cx+5, cy-13 (the 36px label can't scale below font size 1,
+    // only its tail grazes the r=34 ring — candidate d).
+    // role label, brighter again (operator, 2026-08-27 round 2: "a little
+    // brighter... not as bright as the lora wifi lan ble" rows at 238/230/215)
+    // — clearly legible, still short of the interface rows. (operator,
+    // 2026-08-27). Transport reads as TWO stacked lines "Transport" /
+    // "Node" (operator: "so it reads transport node in two lines");
+    // an RNode keeps the single line. Live from op_mode, never baked.
+    // Label only once the radio is ONLINE (operator, 2026-08-27: the boot
+    // window showed "RNode" before the stored transport config applied —
+    // "potentially confusing". Until the board is truly serving, the mark
+    // stays unlabelled; the role appears the moment the LORA dot goes
+    // green, and then it is the truth.)
+    if (radio_online) {
+      tb_canvas.setTextWrap(false);
+      tb_canvas.setTextSize(1);
+      tb_canvas.setTextColor(tb565(150, 195, 172));
+      if (op_mode == MODE_TNC) {
+#if BOARD_MODEL == BOARD_HELTEC_T114
+      int lx = cx + 46 - 9 * 6, ly = cy - 28;   // right-aligned, approved spot
+#else
+      int lx = cx + 5, ly = cy - 17;
 #endif
+      tb_canvas.setCursor(lx, ly);
+      tb_canvas.print("Transport");
+      tb_canvas.setCursor(lx + (9 - 4) * 6 / 2, ly + 9);  // "Node" centred under
+      tb_canvas.print("Node");
+    } else {
+#if BOARD_MODEL == BOARD_HELTEC_T114
+      tb_canvas.setCursor(cx + 46 - 5 * 6, cy - 28);
+#else
+      tb_canvas.setCursor(cx + 5, cy - 13);
+#endif
+      tb_canvas.print("RNode");
+      }
+    }
+#undef TB_MK
+  }
 
 
   // --- noise floor -> ambient haze, drawn FIRST so everything composites over it ---
@@ -600,6 +653,23 @@ void tracker_status_burst() {
     tb_canvas.print(fbuf);
     tb_canvas.setTextSize(1);
   }
+
+#ifdef HAS_GPS
+  // GPS map-pin, top-right (same honesty ladder as the Tracker): absent =
+  // GNSS silent; RED = NMEA flowing, hunting sky; GREEN = fresh fix
+  // (valid + < 10 s old). charsProcessed only grows on real sentences, so
+  // a missing/unpowered module never draws anything.
+  if (gps.charsProcessed() > 10) {
+    bool gps_fix = gps.location.isValid() && gps.location.age() < 10000;
+    const uint16_t *gpin = gps_fix ? gps_pin_green : gps_pin_red;
+    int ggx = TB_W - GPS_PIN_W - 2, ggy = 2;
+    for (int gyy = 0; gyy < GPS_PIN_H; gyy++)
+      for (int gxx = 0; gxx < GPS_PIN_W; gxx++) {
+        uint16_t gc = gpin[gyy * GPS_PIN_W + gxx];
+        if (gc) tb_canvas.drawPixel(ggx + gxx, ggy + gyy, gc);
+      }
+  }
+#endif
 
   display.blit565(tb_canvas.getBuffer(), TB_W, TB_H);
 #else
