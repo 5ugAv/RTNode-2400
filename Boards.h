@@ -910,10 +910,16 @@
       // header of this script. The XIAO block above says true; do not copy it.
       #define HAS_TCXO false
 
-      // The board HAS a 0.96" SSD1306 on I2C (SDA 18 / SCL 17). Left off for
-      // this first pass so the radio is proven on its own, exactly as the
-      // XIAO target does. Turning it on needs a Display.h block as well.
-      #define HAS_DISPLAY false
+      // 0.96" SSD1306 on the board's own I2C. Driven, NOT left off: an OLED
+      // holds its last frame forever, so a dark-configured panel does not go
+      // dark — it freezes on whatever the previous firmware drew. This board
+      // sat there reading "RNODE 00A9 / DEVICE CHECKS PASSED" while running
+      // RTNode (operator, with a photo, 2026-09-09). A node must not display
+      // a claim about itself that is no longer true.
+      #define HAS_DISPLAY true
+      #define DISPLAY OLED
+      #define I2C_SDA 18
+      #define I2C_SCL 17
       #define HAS_CONSOLE true
       #define HAS_WIFI true
       #define HAS_BLUETOOTH false

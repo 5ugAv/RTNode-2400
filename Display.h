@@ -75,6 +75,11 @@
   #define DISP_ADDR 0x3C
   #define SCL_OLED 18
   #define SDA_OLED 17
+#elif BOARD_MODEL == BOARD_EORA_S3
+  #define DISP_RST -1
+  #define DISP_ADDR 0x3C
+  #define SCL_OLED 17
+  #define SDA_OLED 18
 #elif BOARD_MODEL == BOARD_RAK4631
   // RAK1921/SSD1306
   #define DISP_RST -1
@@ -440,6 +445,8 @@ bool display_init() {
       digitalWrite(pin_display_en, LOW);
       delay(50);
       digitalWrite(pin_display_en, HIGH);
+    #elif BOARD_MODEL == BOARD_EORA_S3
+      Wire.begin(SDA_OLED, SCL_OLED);
     #elif BOARD_MODEL == BOARD_T3S3
       Wire.begin(SDA_OLED, SCL_OLED);
     #elif BOARD_MODEL == BOARD_HELTEC32_V2
