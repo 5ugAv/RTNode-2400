@@ -481,8 +481,14 @@ void setup() {
       #endif
     #endif
 
-    #if BOARD_MODEL == BOARD_XIAO_S3
+    #if BOARD_MODEL == BOARD_XIAO_S3 || BOARD_MODEL == BOARD_EORA_S3
       // Improve wakeup from sleep
+      //
+      // The EoRa-S3 wants this for the same reason the RNode port needed a
+      // reset in preInit(): the probe identifies the modem by reading
+      // sync-word registers, and a WARM reset leaves the SX1262 in whatever
+      // state it was already in. A power cycle resets the radio along with
+      // the MCU, which is what makes this look intermittent, not broken.
       delay(300);
       LoRa->reset();
       delay(100);
