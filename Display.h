@@ -634,6 +634,11 @@ bool display_init() {
           // BT/SD/2.4G/LORA icons disappear.
           disp_mode = DISP_MODE_LANDSCAPE;
           display.setRotation(2);  // panel orientation (rotates the 240x240 viewport)
+        #elif BOARD_MODEL == BOARD_EORA_S3
+          // LANDSCAPE, like the T-Watch note above: PORTRAIT puts stat_area at
+          // (0,64), off a 128x64 canvas, and it is silently clipped away.
+          disp_mode = DISP_MODE_LANDSCAPE;
+          display.setRotation(0);
         #elif BOARD_MODEL == BOARD_TECHO
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(3);
