@@ -34,6 +34,18 @@ done
 target=""; actual=""
 for lap in $(seq 1 6); do
   out=$(timeout 45 rnodeconf "$port" -K -L 2>&1)
+  # A FRESH DFU WIPES THE EEPROM, so there is no blessing to heal yet — the
+  # build provisions and blesses in its very next step (rtnode_build's
+  # wifi_onboarding: -r, then partition_hashes, then --firmware-hash). This
+  # script exists for the OTHER path: a human re-flashing an ALREADY
+  # provisioned board. Treating "not provisioned" as a failure killed the
+  # flash step before provisioning could ever run, and the T114 birth died
+  # with the firmware already on the board (2026-09-19). Not an error.
+  if echo "$out" | grep -q "not been provisioned"; then
+    echo "rebless: device not provisioned yet — nothing to re-bless."
+    echo "rebless: the build provisions and blesses it in the next step."
+    exit 0
+  fi
   target=$(echo "$out" | grep "target firmware hash" | grep -o "[0-9a-f]\{64\}")
   actual=$(echo "$out" | grep "actual firmware hash" | grep -o "[0-9a-f]\{64\}")
   [ -n "$target" ] && [ -n "$actual" ] && break
