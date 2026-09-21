@@ -43,9 +43,15 @@
 // Fork version string. NOTE: this is the single in-firmware source of truth
 // for the RTNode fork version (upstream RNode's MAJ_VERS/MIN_VERS is a
 // separate protocol version). Bump it in lockstep with release tags.
+// This is the Node Medic build of RTNode-2400 — "RTNode-2400-NM". The
+// upstream version stays readable inside ours (semver build metadata:
+// "+nm.N", N bumped per NM release); the binary beacon still carries only
+// major/minor/patch, so the NM mark rides in the /status JSON "fork" field
+// and in the medic's own birth certificate. Decided 2026-09-21.
 #ifndef RTNODE_FORK_VERSION
-#define RTNODE_FORK_VERSION "0.7.0"   // 0.7.0: v2 health beacon (battery + link tail)
+#define RTNODE_FORK_VERSION "0.7.0+nm.1"   // 0.7.0: v2 health beacon; +nm.1: NM build
 #endif
+#define RTNODE_FORK_NAME "RTNode-2400-NM"
 // Numeric components of RTNODE_FORK_VERSION for the binary health beacon.
 // Keep these in sync with the string above on every release.
 #define RTNODE_FW_MAJOR 0
@@ -212,7 +218,7 @@ inline uint8_t health_battery_percent(uint16_t mv) {
 // Reads current health from existing globals. Cheap — safe to call per beacon
 // or per HTTP request.
 inline void collect_health(HealthSnapshot& h) {
-    h.fork       = "RTNode";
+    h.fork       = RTNODE_FORK_NAME;
     h.fw_version = RTNODE_FORK_VERSION;
 #if defined(MAJ_VERS) && defined(MIN_VERS)
     h.rnode_maj  = MAJ_VERS;

@@ -1292,7 +1292,7 @@ void draw_disp_area() {
       if (firewall_state.node_name[0] != '\0') {
         disp_area.print(firewall_state.node_name);
       } else {
-        disp_area.print("RTNode");
+        disp_area.print("RTNode-NM");
       }
 
       disp_area.setTextColor(SSD1306_WHITE);

@@ -1,3 +1,13 @@
+> **RTNode-2400-NM** — the Node Medic build of RTNode-2400.
+> This is a modified fork of [GrayHatGuy/RTNode-2400](https://github.com/GrayHatGuy/RTNode-2400)
+> (GPL-3.0). Modified by 5ugAv, 2026-08 → 2026-09. Additions over upstream:
+> the health beacon (`HealthBeacon.h`, v1–v3, with the commandable-lighthouse
+> poll and a rate limit on remote requests), the birth cry (`BirthCry.h`),
+> nRF52 targets (Heltec T114 with L76K GNSS, LilyGO T-Echo), the painted GPS
+> pin, `rebless.sh` hash blessing, and display polish. Versions carry `+nm.N`
+> build metadata so upstream's version stays readable inside ours. Report
+> NM-build behaviour to this repository, not upstream.
+
 # RTNode-Reticulum Transport Node 
 
 A custom firmware for the that operates as a **Transport Node** — in Boundry mode only and bridging a local LoRa radio network with a remote TCP/IP backbone (such as [rmap.world](https://rmap.world)) over WiFi.
