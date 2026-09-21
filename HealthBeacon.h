@@ -186,6 +186,22 @@ inline void health_beacon_send() {
 #ifndef HB_REMOTE_BENCH_OPS
 #define HB_REMOTE_BENCH_OPS 0
 #endif
+
+// 0x04 "send full health TO the destination that follows": the medic's reply
+// destination hash (16) and a nonce (8). The reply is a UNICAST packet —
+// node_dest(16) | nonce(8) | beacon(N) | Ed25519 sig(64) over the first
+// three — routed back through the mesh like any message, so a medic that
+// cannot hear this node directly still gets an answer in seconds
+// (docs/HEALTH_REPLY_UNICAST.md in the Node Medic repo, 2026-09-21).
+// Sent by unicast ONLY when this node can recall the medic's identity AND
+// has a path back; otherwise it announces (today's reply) and requests a
+// path so the next poll is unicast. Never blocks in the packet callback.
+#define HB_OPCODE_HEALTH_TO      0x04
+#define HB_REPLY_DEST_LEN        16
+#define HB_REPLY_NONCE_LEN       8
+#define HB_REQUEST_TO_LEN        (1 + HB_REPLY_DEST_LEN + HB_REPLY_NONCE_LEN)
+#define HB_REPLY_APP_NAME        "nodemedic"
+#define HB_REPLY_ASPECTS         "health.reply"
 #ifndef HB_REQUEST_MIN_GAP_MS
 #define HB_REQUEST_MIN_GAP_MS 30000UL
 #endif
@@ -204,13 +220,50 @@ inline bool health_request_allowed() {
     return true;
 }
 
+// The unicast reply. True when sent; false when this node cannot (no
+// recalled identity for the medic, or no path to it) — the caller announces.
+// Reply = our health destination hash | nonce | beacon | signature, the
+// signature by this node's identity over the first three, so the medic can
+// attribute and verify it whatever route it took.
+inline bool health_reply_unicast(const RNS::Bytes& reply_dest, const RNS::Bytes& nonce) {
+    if (!health_destination) return false;
+    RNS::Identity medic = RNS::Identity::recall(reply_dest);
+    if (!medic) return false;
+    if (!RNS::Transport::has_path(reply_dest)) return false;
+
+    uint8_t payload[HEALTH_BEACON_LEN_LOCAL];
+    health_build_beacon(payload, health_fault);
+
+    RNS::Bytes signed_bytes;
+    signed_bytes.append(health_destination.hash());
+    signed_bytes.append(nonce);
+    signed_bytes.append(payload, HEALTH_BEACON_LEN_LOCAL);
+    RNS::Bytes sig = RNS::Transport::identity().sign(signed_bytes);
+
+    RNS::Bytes body = signed_bytes;
+    body.append(sig);
+
+    RNS::Destination out(medic, RNS::Type::Destination::OUT,
+                         RNS::Type::Destination::SINGLE,
+                         HB_REPLY_APP_NAME, HB_REPLY_ASPECTS);
+    RNS::Packet pkt(out, body);
+    pkt.send();
+    Serial.printf("[HealthBeacon] 0x04: unicast health reply sent to %s (%u bytes)\r\n",
+                  reply_dest.toHex().c_str(), (unsigned)body.size());
+    return true;
+}
+
 inline void health_request_handler(const RNS::Bytes& data, const RNS::Packet& packet) {
     (void)packet;
     if (data.size() < 1) return;    // empty: no-op (deliberately not a fault)
     if (data[0] != HB_OPCODE_FULL_HEALTH
+        && data[0] != HB_OPCODE_HEALTH_TO
         && data[0] != HB_OPCODE_IDENTIFY
         && data[0] != HB_OPCODE_LED_TEST) {
         return;                     // unknown opcode: the registry can grow
+    }
+    if (data[0] == HB_OPCODE_HEALTH_TO && data.size() != HB_REQUEST_TO_LEN) {
+        return;                     // malformed: ignored, not rate-limited
     }
     if (!health_request_allowed()) {
         Serial.printf("[HealthBeacon] request 0x%02X ignored - within %lu ms "
@@ -218,7 +271,18 @@ inline void health_request_handler(const RNS::Bytes& data, const RNS::Packet& pa
                       (unsigned)data[0], (unsigned long)HB_REQUEST_MIN_GAP_MS);
         return;
     }
-    if (data[0] == HB_OPCODE_FULL_HEALTH) {
+    if (data[0] == HB_OPCODE_HEALTH_TO) {
+        RNS::Bytes reply_dest = data.mid(1, HB_REPLY_DEST_LEN);
+        RNS::Bytes nonce      = data.mid(1 + HB_REPLY_DEST_LEN, HB_REPLY_NONCE_LEN);
+        if (!health_reply_unicast(reply_dest, nonce)) {
+            // No key or no road back: today's reply, and ask for the road.
+            Serial.println("[HealthBeacon] 0x04: no identity/path for the medic -> announcing, requesting path");
+            health_beacon_send();
+            RNS::Transport::request_path(reply_dest);
+        }
+        health_ack_blink();
+    }
+    else if (data[0] == HB_OPCODE_FULL_HEALTH) {
         Serial.println("[HealthBeacon] on-demand poll request (0x01) -> announcing now");
         health_beacon_send();
         // Visible acknowledgement at the node: two green pulses (operator

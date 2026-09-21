@@ -49,7 +49,7 @@
 // major/minor/patch, so the NM mark rides in the /status JSON "fork" field
 // and in the medic's own birth certificate. Decided 2026-09-21.
 #ifndef RTNODE_FORK_VERSION
-#define RTNODE_FORK_VERSION "0.7.0+nm.1"   // 0.7.0: v2 health beacon; +nm.1: NM build
+#define RTNODE_FORK_VERSION "0.7.0+nm.2"   // +nm.2: unicast health reply (0x04)
 #endif
 #define RTNODE_FORK_NAME "RTNode-2400-NM"
 // Numeric components of RTNODE_FORK_VERSION for the binary health beacon.
