@@ -115,16 +115,21 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_LOCAL], bool fault
         | ((bt_state != BT_STATE_OFF) ? HB_PWR_BT_UP : 0);
 
 #if HAS_GPS
-    // v3 position tail: the node's OWN live claim about where it stands.
-    // Sentinel when there's no FRESH fix (valid + < 10 s old — the
-    // telemetry-fresh-vs-actual-fix trap) so a stale place is never
-    // announced. fuzzed=false: kin nodes tell their medic the truth; the
-    // wild-node fuzz policy rides the same bit when it lands.
+    // v3 position tail: WHAT THE KEEPER ALLOWED, never the live fix (Node
+    // Medic readiness ledger #157, 2026-10-05). advert_enabled is the answer
+    // given at birth to "Hidden / Show on map"; advert_lat/lon is the point
+    // the medic chose to publish — already privacy-fuzzed, the same point
+    // this node announces — so the beacon carries THAT, fuzzed bit SET.
+    // Hidden (the default) sends the sentinel. The exact live fix stays on
+    // this node's own screen and never goes on air; the satellite count
+    // still says "this node can know where it is".
     int32_t lat_u = HB_POSITION_UNKNOWN, lng_u = HB_POSITION_UNKNOWN;
-    bool gps_fresh = gps.location.isValid() && gps.location.age() < 10000;
-    if (gps_fresh) {
-        lat_u = (int32_t)lround(gps.location.lat() * 1000000.0);
-        lng_u = (int32_t)lround(gps.location.lng() * 1000000.0);
+    bool fuzzed = false;
+    if (firewall_state.advert_enabled
+        && !(firewall_state.advert_lat == 0.0 && firewall_state.advert_lon == 0.0)) {
+        lat_u = (int32_t)lround(firewall_state.advert_lat * 1000000.0);
+        lng_u = (int32_t)lround(firewall_state.advert_lon * 1000000.0);
+        fuzzed = true;
     }
     health_pack_beacon_v3(out,
         uptime_s, heap_kb, rssi, health_reset_reason_code(),
@@ -134,7 +139,7 @@ inline void health_build_beacon(uint8_t out[HEALTH_BEACON_LEN_LOCAL], bool fault
         RTNODE_FW_MAJOR, RTNODE_FW_MINOR, RTNODE_FW_PATCH,
         h.battery_mv, h.battery_pct, power_flags,
         h.lora_snr_db, h.lora_rssi_dbm,
-        lat_u, lng_u, (uint8_t)gps.satellites.value(), false);
+        lat_u, lng_u, (uint8_t)gps.satellites.value(), fuzzed);
 #else
     health_pack_beacon_v2(out,
         uptime_s, heap_kb, rssi, health_reset_reason_code(),
